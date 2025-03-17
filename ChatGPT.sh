@@ -6,8 +6,20 @@ BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="$BASE_DIR/data/config.json"
 DEPENDENCIES_DIR="$BASE_DIR/data/dependencies"
 LOCKDOWND_FILE="$BASE_DIR/data/lockdownd"
-DEPENDENCIES=("jq")
-JQ_BIN="$DEPENDENCIES_DIR/jq"
+TEMP_DIR="$BASE_DIR/data/temp"
+
+# 根据架构选择 jq 版本
+ARCH=$(uname -m)
+if [[ "$ARCH" == "x86_64" ]]; then
+    JQ_URL="https://github.com/stedolan/jq/releases/latest/download/jq-macos-amd64"
+    JQ_BIN="$DEPENDENCIES_DIR/jq-amd64"
+elif [[ "$ARCH" == "arm64" ]]; then
+    JQ_URL="https://github.com/stedolan/jq/releases/latest/download/jq-macos-arm64"
+    JQ_BIN="$DEPENDENCIES_DIR/jq-arm64"
+else
+    echo "不支持的架构: $ARCH"
+    exit 1
+fi
 
 # 创建目录结构
 mkdir -p "$DEPENDENCIES_DIR"
@@ -15,14 +27,12 @@ mkdir -p "$BASE_DIR/data"
 
 # 自动下载依赖
 install_dependencies() {
-    for dep in "${DEPENDENCIES[@]}"; do
-        if [[ "$dep" == "jq" && ! -f "$JQ_BIN" ]]; then
-            echo "缺少依赖：jq，正在下载..."
-            curl -Lo "$JQ_BIN" "https://github.com/stedolan/jq/releases/latest/download/jq-macos"
-            chmod +x "$JQ_BIN"
-            echo "jq 已下载并存放在 $JQ_BIN"
-        fi
-    done
+    if [[ ! -f "$JQ_BIN" ]]; then
+        echo "缺少依赖 jq，正在下载适用于 $ARCH 的版本..."
+        curl -Lo "$JQ_BIN" "$JQ_URL"
+        chmod +x "$JQ_BIN"
+        echo "jq 已下载并存放在 $JQ_BIN"
+    fi
 }
 
 # 选择服务器配置
@@ -105,13 +115,16 @@ activate_ios5_6() {
 # iOS 7-9 激活
 activate_ios7_9() {
     select_mnt
-    mkdir -p "$BASE_DIR/data/temp"
-    scp -P "$port" "$user@$server:/$mnt/mobile/Library/Caches/com.apple.MobileGestalt.plist" "$BASE_DIR/data/temp/"
-    
-    "$JQ_BIN" --arg key "a6vjPkzcRjrsXmniFsm0dg" --argjson value true '.[$key] = $value' "$BASE_DIR/data/temp/com.apple.MobileGestalt.plist" > "$BASE_DIR/data/temp/com.apple.MobileGestalt_modified.plist"
-    
-    scp -P "$port" "$BASE_DIR/data/temp/com.apple.MobileGestalt_modified.plist" "$user@$server:/$mnt/mobile/Library/Caches/com.apple.MobileGestalt.plist"
-    echo "iOS 7-9 激活完成。"
+    mkdir -p "$TEMP_DIR"
+    scp -P "$port" "$user@$server:/$mnt/mobile/Library/Caches/com.apple.MobileGestalt.plist" "$TEMP_DIR/"
+
+    "$JQ_BIN" --arg key "a6vjPkzcRjrsXmniFsm0dg" --argjson value true '.[$key] = $value' "$TEMP_DIR/com.apple.MobileGestalt.plist" > "$TEMP_DIR/com.apple.MobileGestalt_modified.plist"
+
+    scp -P "$port" "$TEMP_DIR/com.apple.MobileGestalt_modified.plist" "$user@$server:/$mnt/mobile/Library/Caches/com.apple.MobileGestalt.plist"
+
+    echo "iOS 7-9 激活完成，正在清理临时文件..."
+    rm -rf "$TEMP_DIR"
+    echo "临时文件已删除。"
 }
 
 # SFTP 文件管理器

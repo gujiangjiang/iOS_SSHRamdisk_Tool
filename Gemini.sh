@@ -23,7 +23,22 @@ mkdir -p "$TEMP_DIR"
 # 检查 jq 是否存在，如果不存在则下载
 if [ ! -f "$JQ_FILE" ]; then
     echo "检测到 jq 不存在，正在下载..."
-    curl -L -o "$JQ_FILE" "https://github.com/stedolan/jq/releases/download/jq-1.6/jq-osx-amd64"
+    # 获取平台架构
+    ARCH=$(uname -m)
+    # 根据平台选择 jq 下载链接
+    case "$ARCH" in
+        x86_64)
+            JQ_URL="https://github.com/stedolan/jq/releases/download/jq-1.6/jq-osx-amd64"
+            ;;
+        arm64)
+            JQ_URL="https://github.com/stedolan/jq/releases/download/jq-1.6/jq-osx-arm64"
+            ;;
+        *)
+            echo "不支持的平台架构：$ARCH"
+            exit 1
+            ;;
+    esac
+    curl -L -o "$JQ_FILE" "$JQ_URL"
     chmod +x "$JQ_FILE"
     echo "jq 下载完成！"
 fi
@@ -112,6 +127,9 @@ activate_ios_7_9() {
     scp -P "$port" "$TEMP_PLIST" "$username@$address:$mnt_dir/mobile/Library/Caches/com.apple.MobileGestalt.plist"
     if [ $? -eq 0 ]; then
         echo "激活成功！"
+        # 删除临时文件夹
+        rm -rf "$TEMP_DIR"
+        mkdir -p "$TEMP_DIR" #重新创建临时文件夹。
     else
         echo "激活失败！"
     fi

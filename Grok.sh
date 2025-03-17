@@ -11,16 +11,23 @@ setup_directories() {
     mkdir -p "${DEPENDENCIES_DIR}"
 }
 
-# 检查并下载 jq 依赖
+# 检查并下载 jq 依赖，根据平台选择合适的二进制
 check_and_install_jq() {
     if ! command -v "${DEPENDENCIES_DIR}/jq" &> /dev/null; then
         echo "未找到 jq，正在下载..."
         arch=$(uname -m)
-        if [ "$arch" = "arm64" ]; then
-            curl -L -o "${DEPENDENCIES_DIR}/jq" https://github.com/stedolan/jq/releases/download/jq-1.7/jq-osx-arm64
-        else
-            curl -L -o "${DEPENDENCIES_DIR}/jq" https://github.com/stedolan/jq/releases/download/jq-1.7/jq-osx-amd64
-        fi
+        case "$arch" in
+            arm64)
+                curl -L -o "${DEPENDENCIES_DIR}/jq" https://github.com/jqlang/jq/releases/download/jq-1.7/jq-osx-arm64
+                ;;
+            x86_64)
+                curl -L -o "${DEPENDENCIES_DIR}/jq" https://github.com/jqlang/jq/releases/download/jq-1.7/jq-osx-amd64
+                ;;
+            *)
+                echo "错误：不支持的平台架构：$arch。请手动下载适合的 jq 二进制。"
+                exit 1
+                ;;
+        esac
         chmod +x "${DEPENDENCIES_DIR}/jq"
         export PATH=$PATH:$(pwd)/${DEPENDENCIES_DIR}
     fi
@@ -163,6 +170,8 @@ activate_ios7_9() {
     fi
 
     echo "激活成功。"
+    # 激活成功后清理临时文件夹
+    rm -rf "${TEMP_DIR}"/*
 }
 
 # sftp 文件管理

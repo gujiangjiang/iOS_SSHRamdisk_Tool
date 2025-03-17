@@ -14,11 +14,30 @@ mkdir -p "$DATA_DIR"
 mkdir -p "$DEPENDENCIES_DIR"
 mkdir -p "$TEMP_DIR"
 
+# 获取系统架构
+get_architecture() {
+    case $(uname -m) in
+        x86_64) echo "amd64" ;;
+        arm64) echo "arm64" ;;
+        *) echo "unsupported" ;;
+    esac
+}
+
 # 下载jq
 download_jq() {
+    local ARCH=$(get_architecture)
+    if [[ "$ARCH" == "unsupported" ]]; then
+        echo "错误：不支持的系统架构。"
+        exit 1
+    fi
+
     if ! command -v "$JSON_PARSER" &> /dev/null; then
         echo "下载jq..."
-        curl -L "https://github.com/stedolan/jq/releases/download/jq-1.6/jq-osx-amd64" -o "$JSON_PARSER"
+        if [[ "$ARCH" == "amd64" ]]; then
+            curl -L "https://github.com/stedolan/jq/releases/download/jq-1.6/jq-osx-amd64" -o "$JSON_PARSER"
+        elif [[ "$ARCH" == "arm64" ]]; then
+            curl -L "https://github.com/stedolan/jq/releases/download/jq-1.6/jq-osx-arm64" -o "$JSON_PARSER"
+        fi
         chmod +x "$JSON_PARSER"
     fi
 }
@@ -145,6 +164,9 @@ activate_ios7_9() {
     scp -P "$PORT" "$TEMP_DIR/com.apple.MobileGestalt_modified.plist" "$USERNAME@$SERVER_ADDRESS:/$MOUNT_DIR/mobile/Library/Caches/com.apple.MobileGestalt.plist"
     if [[ $? -eq 0 ]]; then
         echo "激活成功"
+        # 删除temp文件夹
+        rm -rf "$TEMP_DIR"
+        mkdir -p "$TEMP_DIR"
     else
         echo "激活失败，请检查配置和连接。"
     fi
