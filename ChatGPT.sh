@@ -9,9 +9,15 @@ TEMP_DIR="$BASE_DIR/data/temp"
 
 PLIST_BUDDY="/usr/libexec/PlistBuddy"
 
-# 确保 PlistBuddy 存在
+# 检查 PlistBuddy 是否存在
 if [[ ! -x "$PLIST_BUDDY" ]]; then
     echo "错误：PlistBuddy 未找到，请检查您的 macOS 版本！"
+    exit 1
+fi
+
+# 检查 sshpass 是否安装
+if ! command -v sshpass &>/dev/null; then
+    echo "错误：sshpass 未安装，请安装 sshpass 后重试。"
     exit 1
 fi
 
@@ -79,12 +85,10 @@ bypass_icloud() {
     read -r choice
 
     if [[ "$choice" == "Y" || "$choice" == "y" ]]; then
-        ssh -o StrictHostKeyChecking=no -p "$port" "$user@$server" "rm -rf /$mnt/Applications/Setup.app"
-        if ssh -o StrictHostKeyChecking=no -p "$port" "$user@$server" "[ ! -d /$mnt/Applications/Setup.app ]"; then
-            echo "成功绕过 iCloud 激活锁，请尝试重启设备。"
-        else
-            echo "绕过失败，可能是权限问题或设备未正确挂载 SSHRamdisk。"
-        fi
+        ssh -o StrictHostKeyChecking=no -p "$port" "$user@$server" "rm -rf /$mnt/Applications/Setup.app" && \
+        ssh -o StrictHostKeyChecking=no -p "$port" "$user@$server" "[ ! -d /$mnt/Applications/Setup.app ]" && \
+        echo "成功绕过 iCloud 激活锁，请尝试重启设备。" || \
+        echo "绕过失败，可能是权限问题或设备未正确挂载 SSHRamdisk。"
     fi
 }
 
