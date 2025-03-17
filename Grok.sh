@@ -24,21 +24,34 @@ check_expect() {
     return 0
 }
 
-# 加载配置
-load_config() {
-    if [ -f config.json ]; then
-        alias=$(jq -r '.alias' config.json)
-        server_address=$(jq -r '.server_address' config.json)
-        username=$(jq -r '.username' config.json)
-        password=$(jq -r '.password' config.json)
-        port=$(jq -r '.port' config.json)
-        mount_point=$(jq -r '.mount_point' config.json)
+# 初始化 config.json（如果不存在）
+init_config() {
+    if [ ! -f config.json ]; then
+        echo "[]" > config.json
     fi
 }
 
-# 保存配置
+# 加载所有配置的别名
+list_aliases() {
+    jq -r '.[].alias' config.json
+}
+
+# 根据别名加载配置
+load_config_by_alias() {
+    local selected_alias="$1"
+    alias=$(jq -r ".[] | select(.alias == \"$selected_alias\") | .alias" config.json)
+    server_address=$(jq -r ".[] | select(.alias == \"$selected_alias\") | .server_address" config.json)
+    username=$(jq -r ".[] | select(.alias == \"$selected_alias\") | .username" config.json)
+    password=$(jq -r ".[] | select(.alias == \"$selected_alias\") | .password" config.json)
+    port=$(jq -r ".[] | select(.alias == \"$selected_alias\") | .port" config.json)
+    mount_point=$(jq -r ".[] | select(.alias == \"$selected_alias\") | .mount_point" config.json)
+}
+
+# 保存新配置
 save_config() {
-    echo "{ \"alias\": \"$alias\", \"server_address\": \"$server_address\", \"username\": \"$username\", \"password\": \"$password\", \"port\": \"$port\", \"mount_point\": \"$mount_point\" }" > config.json
+    local temp_config=$(mktemp)
+    jq ". += [{\"alias\": \"$alias\", \"server_address\": \"$server_address\", \"username\": \"$username\", \"password\": \"$password\", \"port\": \"$port\", \"mount_point\": \"$mount_point\"}]" config.json > "$temp_config"
+    mv "$temp_config" config.json
 }
 
 # 测试 SSH 连接
@@ -50,12 +63,20 @@ test_ssh_connection() {
 # 连接设备功能
 connect_device() {
     echo "=== Connect Device ==="
-    if [ -f config.json ]; then
-        read -p "Existing config found. Use it? (y/n): " use_config
-        if [ "$use_config" = "y" ]; then
-            load_config
-            echo "Loaded existing config for $alias ($server_address)."
-            return
+    init_config
+    local aliases=$(list_aliases)
+    if [ -n "$aliases" ]; then
+        echo "Available configurations:"
+        echo "$aliases"
+        read -p "Enter alias to load (or type 'new' to create a new config): " selected_alias
+        if [ "$selected_alias" != "new" ]; then
+            load_config_by_alias "$selected_alias"
+            if [ -n "$alias" ]; then
+                echo "Loaded config for $alias ($server_address)."
+                return
+            else
+                echo "Error: Alias not found. Creating new config..."
+            fi
         fi
     fi
 
@@ -166,7 +187,7 @@ EOF
 # 主菜单
 main_menu() {
     check_and_install_jq
-    load_config
+    init_config
 
     while true; do
         clear

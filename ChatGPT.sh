@@ -18,17 +18,36 @@ install_dependencies() {
     done
 }
 
-# 加载或创建配置
-load_or_create_config() {
-    if [[ -f "$CONFIG_FILE" ]]; then
-        echo "检测到已保存的配置，是否加载？(y/n)"
-        read -r choice
-        if [[ "$choice" == "y" ]]; then
-            echo "加载已保存的服务器配置..."
-            return
-        fi
+# 显示已有服务器配置并选择
+select_server_config() {
+    if [[ ! -f "$CONFIG_FILE" || $(jq length "$CONFIG_FILE") -eq 0 ]]; then
+        echo "当前无已保存的服务器配置。"
+        return 1
     fi
 
+    echo "请选择要加载的服务器别名："
+    jq -r '.[].alias' "$CONFIG_FILE" | nl
+    read -r choice
+
+    selected_alias=$(jq -r --argjson idx "$choice" '.[$idx - 1].alias' "$CONFIG_FILE")
+    selected_config=$(jq -r --argjson idx "$choice" '.[$idx - 1]' "$CONFIG_FILE")
+
+    if [[ -z "$selected_alias" ]]; then
+        echo "选择无效，请重试。"
+        return 1
+    fi
+
+    echo "已选择服务器：$selected_alias"
+    user=$(jq -r '.user' <<< "$selected_config")
+    server=$(jq -r '.server' <<< "$selected_config")
+    password=$(jq -r '.password' <<< "$selected_config")
+    port=$(jq -r '.port' <<< "$selected_config")
+
+    return 0
+}
+
+# 新建服务器配置
+create_server_config() {
     echo "请输入服务器别名:"
     read -r alias
     echo "请输入服务器地址:"
@@ -43,7 +62,15 @@ load_or_create_config() {
     echo "测试 SSH 连接..."
     if sshpass -p "$password" ssh -o StrictHostKeyChecking=no -p "$port" "$user@$server" "exit"; then
         echo "服务器测试成功，保存配置..."
-        echo "{\"alias\": \"$alias\", \"server\": \"$server\", \"user\": \"$user\", \"password\": \"$password\", \"port\": \"$port\"}" > "$CONFIG_FILE"
+
+        # 读取现有配置并添加新配置
+        if [[ -f "$CONFIG_FILE" ]]; then
+            config_data=$(jq ". + [{\"alias\": \"$alias\", \"server\": \"$server\", \"user\": \"$user\", \"password\": \"$password\", \"port\": \"$port\"}]" "$CONFIG_FILE")
+        else
+            config_data="[ {\"alias\": \"$alias\", \"server\": \"$server\", \"user\": \"$user\", \"password\": \"$password\", \"port\": \"$port\"} ]"
+        fi
+
+        echo "$config_data" > "$CONFIG_FILE"
     else
         echo "连接失败，请检查输入的信息。"
         exit 1
@@ -93,7 +120,15 @@ main_menu() {
 
         case $option in
         1)
-            load_or_create_config
+            echo "1. 选择已有配置"
+            echo "2. 新建服务器配置"
+            read -r sub_option
+
+            if [[ "$sub_option" == "1" ]]; then
+                select_server_config || continue
+            else
+                create_server_config
+            fi
             ;;
         2)
             echo "1. iOS 5-6 激活"
