@@ -2,7 +2,7 @@ import json
 import os
 import subprocess
 import requests
-import zipfile
+import plistlib
 
 def download_jq():
     """下载 jq 到程序目录"""
@@ -41,7 +41,7 @@ def test_ssh_connection(server_data):
     try:
         command = [
             "ssh",
-            "-o", "StrictHostKeyChecking=no", #第一次连接时，不弹出提示。
+            "-o", "StrictHostKeyChecking=no",
             f"{server_data['username']}@{server_data['address']}",
             "-p", server_data["port"],
             "echo 'SSH 连接测试成功！'",
@@ -62,30 +62,46 @@ def test_ssh_connection(server_data):
 def connect_device(config):
     """连接设备"""
     if config:
-        print("存在已保存的数据，是否一键引用？ (y/n)")
+        print("已保存的服务器：")
+        for alias in config:
+            print(f"- {alias}")
+        print("是否选择已保存的服务器？ (y/n)")
         if input().lower() == "y":
-            server_data = config
+            alias = input("请输入服务器别名：")
+            if alias in config:
+                server_data = config[alias]
+                return server_data
+            else:
+                print("未找到该服务器！")
+                server_data = {}
         else:
             server_data = {}
     else:
         server_data = {}
 
-    if not server_data:
-        server_data["alias"] = input("服务器别名：")
-        server_data["address"] = input("服务器地址：")
-        server_data["username"] = input("用户名：")
-        server_data["password"] = input("密码：")
-        server_data["port"] = input("端口号：")
+    server_data["alias"] = input("服务器别名：")
+    server_data["address"] = input("服务器地址：")
+    server_data["username"] = input("用户名：")
+    server_data["password"] = input("密码：")
+    server_data["port"] = input("端口号：")
 
-        if test_ssh_connection(server_data):
-            print("服务器测试成功，配置已保存！")
-            save_config(server_data)
-        else:
-            print("服务器测试失败！")
+    if test_ssh_connection(server_data):
+        print("服务器测试成功，配置已保存！")
+        config[server_data["alias"]] = {
+            "address": server_data["address"],
+            "username": server_data["username"],
+            "password": server_data["password"],
+            "port": server_data["port"],
+        }
+        save_config(config)
+        return server_data
+    else:
+        print("服务器测试失败！")
+        return None
 
-def factory_activate_ios(config):
+def factory_activate_ios(server_data):
     """一键工厂激活 iOS"""
-    if not config:
+    if not server_data:
         print("请先连接设备！")
         return
 
@@ -102,27 +118,27 @@ def factory_activate_ios(config):
     choice = input()
 
     if choice == "1":
-        activate_ios_5_6(config, mnt_dir)
+        activate_ios_5_6(server_data, mnt_dir)
     elif choice == "2":
-        activate_ios_7_9(config, mnt_dir)
+        activate_ios_7_9(server_data, mnt_dir)
     else:
         print("无效的选择！")
 
-def activate_ios_5_6(config, mnt_dir):
+def activate_ios_5_6(server_data, mnt_dir):
     """iOS 5-iOS 6 激活"""
     try:
         command = [
             "scp",
-            "-P", config["port"],
+            "-P", server_data["port"],
             "lockdownd",
-            f"{config['username']}@{config['address']}:{mnt_dir}/usr/libexec/lockdownd",
+            f"{server_data['username']}@{server_data['address']}:{mnt_dir}/usr/libexec/lockdownd",
         ]
         subprocess.run(command, check=True)
         command = [
             "ssh",
             "-o", "StrictHostKeyChecking=no",
-            f"{config['username']}@{config['address']}",
-            "-p", config["port"],
+            f"{server_data['username']}@{server_data['address']}",
+            "-p", server_data["port"],
             f"chmod 0755 {mnt_dir}/usr/libexec/lockdownd",
         ]
         subprocess.run(command, check=True)
@@ -130,20 +146,17 @@ def activate_ios_5_6(config, mnt_dir):
     except subprocess.CalledProcessError as e:
         print(f"激活失败：{e}")
 
-def activate_ios_7_9(config, mnt_dir):
+def activate_ios_7_9(server_data, mnt_dir):
     """iOS 7-iOS 9 激活"""
     try:
         command = [
             "scp",
-            "-P", config["port"],
-            f"{config['username']}@{config['address']}:{mnt_dir}/mobile/Library/Caches/com.apple.MobileGestalt.plist",
+            "-P", server_data["port"],
+            f"{server_data['username']}@{server_data['address']}:{mnt_dir}/mobile/Library/Caches/com.apple.MobileGestalt.plist",
             "temp/com.apple.MobileGestalt.plist",
         ]
         subprocess.run(command, check=True)
 
-        # 修改 plist 文件（这里需要使用第三方库，例如 `plistlib`）
-        # ... (修改 plist 文件的代码) ...
-        #这里因为macos自带plistlib，所以可以进行plist文件的编辑。
         import plistlib
 
         with open("temp/com.apple.MobileGestalt.plist", 'rb') as fp:
@@ -155,26 +168,26 @@ def activate_ios_7_9(config, mnt_dir):
 
         command = [
             "scp",
-            "-P", config["port"],
+            "-P", server_data["port"],
             "temp/com.apple.MobileGestalt.plist",
-            f"{config['username']}@{config['address']}:{mnt_dir}/mobile/Library/Caches/com.apple.MobileGestalt.plist",
+            f"{server_data['username']}@{server_data['address']}:{mnt_dir}/mobile/Library/Caches/com.apple.MobileGestalt.plist",
         ]
         subprocess.run(command, check=True)
         print("激活成功！")
     except subprocess.CalledProcessError as e:
         print(f"激活失败：{e}")
 
-def sftp_file_manager(config):
+def sftp_file_manager(server_data):
     """SFTP 文件管理器"""
-    if not config:
+    if not server_data:
         print("请先连接设备！")
         return
 
     command = [
         "sftp",
         "-o", "StrictHostKeyChecking=no",
-        "-P", config["port"],
-        f"{config['username']}@{config['address']}",
+        "-P", server_data["port"],
+        f"{server_data['username']}@{server_data['address']}",
     ]
     subprocess.run(command)
 
@@ -182,6 +195,7 @@ def main():
     """主程序"""
     check_dependencies()
     config = load_config()
+    server_data = None
 
     while True:
         print("\n32 位 iPhone SSHRamdisk 操作工具")
@@ -193,13 +207,20 @@ def main():
         choice = input("请选择：")
 
         if choice == "1":
-            connect_device(config)
-            config = load_config() #重新读取config，保证config数据是最新的。
+            server_data = connect_device(config)
+            if server_data:
+                config = load_config() #重新读取config，保证config数据是最新的。
+            else:
+                continue #如果连接失败，则跳过本次循环，重新显示主菜单。
         elif choice == "2":
-            factory_activate_ios(config)
+            factory_activate_ios(server_data)
         elif choice == "3":
-            sftp_file_manager(config)
+            sftp_file_manager(server_data)
         elif choice == "4":
             break
         else:
-            print
+            print("无效的选择！")
+
+if __name__ == "__main__":
+    if not os.path.exists("temp"):
+        os.makedirs("temp
