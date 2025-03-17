@@ -1,17 +1,28 @@
 #!/bin/bash
 
+# 定义目录变量
+DATA_DIR="data"
+DEPENDENCIES_DIR="${DATA_DIR}/dependencies"
+TEMP_DIR="${DATA_DIR}/temp"
+
+# 创建必要的目录结构
+setup_directories() {
+    mkdir -p "${TEMP_DIR}"
+    mkdir -p "${DEPENDENCIES_DIR}"
+}
+
 # 检查并下载 jq 依赖
 check_and_install_jq() {
-    if ! command -v jq &> /dev/null; then
+    if ! command -v "${DEPENDENCIES_DIR}/jq" &> /dev/null; then
         echo "未找到 jq，正在下载..."
         arch=$(uname -m)
         if [ "$arch" = "arm64" ]; then
-            curl -L -o jq https://github.com/stedolan/jq/releases/download/jq-1.7/jq-osx-arm64
+            curl -L -o "${DEPENDENCIES_DIR}/jq" https://github.com/stedolan/jq/releases/download/jq-1.7/jq-osx-arm64
         else
-            curl -L -o jq https://github.com/stedolan/jq/releases/download/jq-1.7/jq-osx-amd64
+            curl -L -o "${DEPENDENCIES_DIR}/jq" https://github.com/stedolan/jq/releases/download/jq-1.7/jq-osx-amd64
         fi
-        chmod +x jq
-        export PATH=$PATH:$(pwd)
+        chmod +x "${DEPENDENCIES_DIR}/jq"
+        export PATH=$PATH:$(pwd)/${DEPENDENCIES_DIR}
     fi
 }
 
@@ -26,32 +37,32 @@ check_expect() {
 
 # 初始化 config.json（如果不存在）
 init_config() {
-    if [ ! -f config.json ]; then
-        echo "[]" > config.json
+    if [ ! -f "${DATA_DIR}/config.json" ]; then
+        echo "[]" > "${DATA_DIR}/config.json"
     fi
 }
 
 # 列出所有配置的别名
 list_aliases() {
-    jq -r '.[].alias' config.json
+    "${DEPENDENCIES_DIR}/jq" -r '.[].alias' "${DATA_DIR}/config.json"
 }
 
 # 根据别名加载配置
 load_config_by_alias() {
     local selected_alias="$1"
-    alias=$(jq -r ".[] | select(.alias == \"$selected_alias\") | .alias" config.json)
-    server_address=$(jq -r ".[] | select(.alias == \"$selected_alias\") | .server_address" config.json)
-    username=$(jq -r ".[] | select(.alias == \"$selected_alias\") | .username" config.json)
-    password=$(jq -r ".[] | select(.alias == \"$selected_alias\") | .password" config.json)
-    port=$(jq -r ".[] | select(.alias == \"$selected_alias\") | .port" config.json)
-    mount_point=$(jq -r ".[] | select(.alias == \"$selected_alias\") | .mount_point" config.json)
+    alias=$("${DEPENDENCIES_DIR}/jq" -r ".[] | select(.alias == \"$selected_alias\") | .alias" "${DATA_DIR}/config.json")
+    server_address=$("${DEPENDENCIES_DIR}/jq" -r ".[] | select(.alias == \"$selected_alias\") | .server_address" "${DATA_DIR}/config.json")
+    username=$("${DEPENDENCIES_DIR}/jq" -r ".[] | select(.alias == \"$selected_alias\") | .username" "${DATA_DIR}/config.json")
+    password=$("${DEPENDENCIES_DIR}/jq" -r ".[] | select(.alias == \"$selected_alias\") | .password" "${DATA_DIR}/config.json")
+    port=$("${DEPENDENCIES_DIR}/jq" -r ".[] | select(.alias == \"$selected_alias\") | .port" "${DATA_DIR}/config.json")
+    mount_point=$("${DEPENDENCIES_DIR}/jq" -r ".[] | select(.alias == \"$selected_alias\") | .mount_point" "${DATA_DIR}/config.json")
 }
 
 # 保存新配置
 save_config() {
     local temp_config=$(mktemp)
-    jq ". += [{\"alias\": \"$alias\", \"server_address\": \"$server_address\", \"username\": \"$username\", \"password\": \"$password\", \"port\": \"$port\", \"mount_point\": \"$mount_point\"}]" config.json > "$temp_config"
-    mv "$temp_config" config.json
+    "${DEPENDENCIES_DIR}/jq" ". += [{\"alias\": \"$alias\", \"server_address\": \"$server_address\", \"username\": \"$username\", \"password\": \"$password\", \"port\": \"$port\", \"mount_point\": \"$mount_point\"}]" "${DATA_DIR}/config.json" > "$temp_config"
+    mv "$temp_config" "${DATA_DIR}/config.json"
 }
 
 # 测试 SSH 连接
@@ -105,12 +116,12 @@ activate_ios5_6() {
     fi
     echo "使用挂载点：$mount_point"
 
-    if [ ! -f lockdownd ]; then
-        echo "错误：当前目录未找到 lockdownd 文件。"
+    if [ ! -f "${DATA_DIR}/lockdownd" ]; then
+        echo "错误：${DATA_DIR} 目录下未找到 lockdownd 文件。请将 lockdownd 文件放置到 ${DATA_DIR}/ 目录。"
         return
     fi
 
-    scp -P "$port" lockdownd "$username@$server_address:$mount_point/usr/libexec/lockdownd" &> /dev/null
+    scp -P "$port" "${DATA_DIR}/lockdownd" "$username@$server_address:$mount_point/usr/libexec/lockdownd" &> /dev/null
     if [ $? -ne 0 ]; then
         echo "错误：上传 lockdownd 文件失败。"
         return
@@ -133,20 +144,19 @@ activate_ios7_9() {
     fi
     echo "使用挂载点：$mount_point"
 
-    mkdir -p temp
-    scp -P "$port" "$username@$server_address:$mount_point/mobile/Library/Caches/com.apple.MobileGestalt.plist" temp/ &> /dev/null
+    scp -P "$port" "$username@$server_address:$mount_point/mobile/Library/Caches/com.apple.MobileGestalt.plist" "${TEMP_DIR}/" &> /dev/null
     if [ $? -ne 0 ]; then
         echo "错误：下载 com.apple.MobileGestalt.plist 文件失败。"
         return
     fi
 
-    /usr/libexec/PlistBuddy -c "Add a6vjPkzcRjrsXmniFsm0dg bool true" temp/com.apple.MobileGestalt.plist &> /dev/null
+    /usr/libexec/PlistBuddy -c "Add a6vjPkzcRjrsXmniFsm0dg bool true" "${TEMP_DIR}/com.apple.MobileGestalt.plist" &> /dev/null
     if [ $? -ne 0 ]; then
         echo "错误：修改 com.apple.MobileGestalt.plist 文件失败。"
         return
     fi
 
-    scp -P "$port" temp/com.apple.MobileGestalt.plist "$username@$server_address:$mount_point/mobile/Library/Caches/com.apple.MobileGestalt.plist" &> /dev/null
+    scp -P "$port" "${TEMP_DIR}/com.apple.MobileGestalt.plist" "$username@$server_address:$mount_point/mobile/Library/Caches/com.apple.MobileGestalt.plist" &> /dev/null
     if [ $? -ne 0 ]; then
         echo "错误：上传修改后的 com.apple.MobileGestalt.plist 文件失败。"
         return
@@ -169,7 +179,7 @@ sftp_manager() {
             echo "错误：未找到密码，无法使用自动登录。请手动输入密码。"
             sftp -P "$port" "$username@$server_address"
         else
-            cat <<EOF > sftp_expect.sh
+            cat <<EOF > "${TEMP_DIR}/sftp_expect.sh"
 #!/usr/bin/expect -f
 set username [lindex \$argv 0]
 set server [lindex \$argv 1]
@@ -180,9 +190,9 @@ expect "password:"
 send "\$password\r"
 interact
 EOF
-            chmod +x sftp_expect.sh
-            ./sftp_expect.sh "$username" "$server_address" "$port" "$password"
-            rm -f sftp_expect.sh
+            chmod +x "${TEMP_DIR}/sftp_expect.sh"
+            "${TEMP_DIR}/sftp_expect.sh" "$username" "$server_address" "$port" "$password"
+            rm -f "${TEMP_DIR}/sftp_expect.sh"
         fi
     else
         # 缺少 expect，提示手动输入密码
@@ -193,6 +203,7 @@ EOF
 
 # 主菜单
 main_menu() {
+    setup_directories
     check_and_install_jq
     init_config
 
