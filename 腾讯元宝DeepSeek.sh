@@ -3,22 +3,14 @@
 # 程序目录
 PROGRAM_DIR=$(dirname "$0")
 DATA_DIR="$PROGRAM_DIR/data"
-DEPENDENCIES_DIR="$DATA_DIR/dependencies"
+CONFIG_PLIST="$DATA_DIR/config.plist"
 TEMP_DIR="$DATA_DIR/temp"
-CONFIG_FILE="$DATA_DIR/config.json"
 
 # 确保目录存在
-mkdir -p "$DATA_DIR" "$DEPENDENCIES_DIR" "$TEMP_DIR"
+mkdir -p "$DATA_DIR" "$TEMP_DIR"
 
-# 自动下载依赖项
-download_dependencies() {
-    if ! command -v jq &> /dev/null; then
-        echo "正在下载 jq..."
-        curl -L https://github.com/stedolan/jq/releases/download/jq-1.6/jq-osx-amd64 -o "$DEPENDENCIES_DIR/jq"
-        chmod +x "$DEPENDENCIES_DIR/jq"
-        export PATH="$DEPENDENCIES_DIR:$PATH"
-    fi
-}
+# 定义PlistBuddy路径
+PLIST_BUDDY="/usr/libexec/PlistBuddy"
 
 # 主菜单
 main_menu() {
@@ -39,14 +31,14 @@ main_menu() {
 
 # 连接设备
 connect_device() {
-    if [ -f "$CONFIG_FILE" ]; then
+    if [ -f "$CONFIG_PLIST" ]; then
         echo "存在已保存的数据，是否一键引用？(y/n)"
         read choice
         if [ "$choice" = "y" ]; then
-            alias=$(jq -r '.alias' "$CONFIG_FILE")
-            username=$(jq -r '.username' "$CONFIG_FILE")
-            password=$(jq -r '.password' "$CONFIG_FILE")
-            port=$(jq -r '.port' "$CONFIG_FILE")
+            alias=$($PLIST_BUDDY -c "Print :alias" "$CONFIG_PLIST")
+            username=$($PLIST_BUDDY -c "Print :username" "$CONFIG_PLIST")
+            password=$($PLIST_BUDDY -c "Print :password" "$CONFIG_PLIST")
+            port=$($PLIST_BUDDY -c "Print :port" "$CONFIG_PLIST")
             echo "引用配置: $alias"
         else
             create_new_config
@@ -63,14 +55,18 @@ create_new_config() {
     read -p "请输入用户名: " username
     read -p "请输入密码: " password
     read -p "请输入端口号: " port
-    echo "{\"alias\":\"$alias\",\"username\":\"$username\",\"password\":\"$password\",\"port\":$port}" > "$CONFIG_FILE"
 }
 
-# 测试SSH连接
+# 测试SSH连接并保存配置
 test_ssh_connection() {
     echo "正在测试SSH连接..."
     if sshpass -p "$password" ssh -p "$port" "$username@localhost" echo "连接成功"; then
         echo "服务器测试成功，配置已保存。"
+        # 测试成功后再保存配置
+        $PLIST_BUDDY -c "Add :alias string $alias" "$CONFIG_PLIST" 2>/dev/null || $PLIST_BUDDY -c "Set :alias $alias" "$CONFIG_PLIST"
+        $PLIST_BUDDY -c "Add :username string $username" "$CONFIG_PLIST" 2>/dev/null || $PLIST_BUDDY -c "Set :username $username" "$CONFIG_PLIST"
+        $PLIST_BUDDY -c "Add :password string $password" "$CONFIG_PLIST" 2>/dev/null || $PLIST_BUDDY -c "Set :password $password" "$CONFIG_PLIST"
+        $PLIST_BUDDY -c "Add :port integer $port" "$CONFIG_PLIST" 2>/dev/null || $PLIST_BUDDY -c "Set :port $port" "$CONFIG_PLIST"
     else
         echo "连接失败，请检查配置。"
     fi
@@ -109,7 +105,7 @@ activate_ios5_6() {
 activate_ios7_9() {
     read -p "请输入SSHRamdisk挂载目录（如mnt1、mnt2等）: " mount_dir
     scp -P "$port" "$username@localhost:/$mount_dir/mobile/Library/Caches/com.apple.MobileGestalt.plist" "$TEMP_DIR/"
-    plutil -insert "a6vjPkzcRjrsXmniFsm0dg" -bool true "$TEMP_DIR/com.apple.MobileGestalt.plist"
+    $PLIST_BUDDY -c "Add :a6vjPkzcRjrsXmniFsm0dg bool true" "$TEMP_DIR/com.apple.MobileGestalt.plist" 2>/dev/null || $PLIST_BUDDY -c "Set :a6vjPkzcRjrsXmniFsm0dg bool true" "$TEMP_DIR/com.apple.MobileGestalt.plist"
     scp -P "$port" "$TEMP_DIR/com.apple.MobileGestalt.plist" "$username@localhost:/$mount_dir/mobile/Library/Caches/com.apple.MobileGestalt.plist"
     echo "激活成功。"
 }
@@ -127,5 +123,4 @@ sftp_manager() {
 }
 
 # 主程序
-download_dependencies
 main_menu

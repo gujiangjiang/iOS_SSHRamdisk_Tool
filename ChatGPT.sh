@@ -3,62 +3,37 @@
 set -e
 
 BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG_FILE="$BASE_DIR/data/config.json"
-DEPENDENCIES_DIR="$BASE_DIR/data/dependencies"
+CONFIG_FILE="$BASE_DIR/data/config.plist"
 LOCKDOWND_FILE="$BASE_DIR/data/lockdownd"
 TEMP_DIR="$BASE_DIR/data/temp"
 
-# 根据架构选择 jq 版本
-ARCH=$(uname -m)
-if [[ "$ARCH" == "x86_64" ]]; then
-    JQ_URL="https://github.com/stedolan/jq/releases/latest/download/jq-macos-amd64"
-    JQ_BIN="$DEPENDENCIES_DIR/jq-amd64"
-elif [[ "$ARCH" == "arm64" ]]; then
-    JQ_URL="https://github.com/stedolan/jq/releases/latest/download/jq-macos-arm64"
-    JQ_BIN="$DEPENDENCIES_DIR/jq-arm64"
-else
-    echo "不支持的架构: $ARCH"
-    exit 1
-fi
+PLIST_BUDDY="/usr/libexec/PlistBuddy"
 
-# 创建目录结构
-mkdir -p "$DEPENDENCIES_DIR"
+# 创建必要的目录
 mkdir -p "$BASE_DIR/data"
-
-# 自动下载依赖
-install_dependencies() {
-    if [[ ! -f "$JQ_BIN" ]]; then
-        echo "缺少依赖 jq，正在下载适用于 $ARCH 的版本..."
-        curl -Lo "$JQ_BIN" "$JQ_URL"
-        chmod +x "$JQ_BIN"
-        echo "jq 已下载并存放在 $JQ_BIN"
-    fi
-}
 
 # 选择服务器配置
 select_server_config() {
-    if [[ ! -f "$CONFIG_FILE" || $("$JQ_BIN" length "$CONFIG_FILE") -eq 0 ]]; then
+    if [[ ! -f "$CONFIG_FILE" ]]; then
         echo "当前无已保存的服务器配置。"
         return 1
     fi
 
-    echo "请选择要加载的服务器别名："
-    "$JQ_BIN" -r '.[].alias' "$CONFIG_FILE" | nl
+    echo "可用的服务器别名："
+    $PLIST_BUDDY -c "Print :Servers" "$CONFIG_FILE" | grep "Dict" | nl
     read -r choice
 
-    selected_alias=$("$JQ_BIN" -r --argjson idx "$choice" '.[$idx - 1].alias' "$CONFIG_FILE")
-    selected_config=$("$JQ_BIN" -r --argjson idx "$choice" '.[$idx - 1]' "$CONFIG_FILE")
-
+    selected_alias=$($PLIST_BUDDY -c "Print :Servers:$((choice - 1)):Alias" "$CONFIG_FILE")
     if [[ -z "$selected_alias" ]]; then
         echo "选择无效，请重试。"
         return 1
     fi
 
     echo "已选择服务器：$selected_alias"
-    user=$("$JQ_BIN" -r '.user' <<< "$selected_config")
-    server=$("$JQ_BIN" -r '.server' <<< "$selected_config")
-    password=$("$JQ_BIN" -r '.password' <<< "$selected_config")
-    port=$("$JQ_BIN" -r '.port' <<< "$selected_config")
+    user=$($PLIST_BUDDY -c "Print :Servers:$((choice - 1)):User" "$CONFIG_FILE")
+    server=$($PLIST_BUDDY -c "Print :Servers:$((choice - 1)):Server" "$CONFIG_FILE")
+    password=$($PLIST_BUDDY -c "Print :Servers:$((choice - 1)):Password" "$CONFIG_FILE")
+    port=$($PLIST_BUDDY -c "Print :Servers:$((choice - 1)):Port" "$CONFIG_FILE")
 
     return 0
 }
@@ -80,13 +55,18 @@ create_server_config() {
     if sshpass -p "$password" ssh -o StrictHostKeyChecking=no -p "$port" "$user@$server" "exit"; then
         echo "服务器测试成功，保存配置..."
 
-        if [[ -f "$CONFIG_FILE" ]]; then
-            config_data=$("$JQ_BIN" ". + [{\"alias\": \"$alias\", \"server\": \"$server\", \"user\": \"$user\", \"password\": \"$password\", \"port\": \"$port\"}]" "$CONFIG_FILE")
-        else
-            config_data="[ {\"alias\": \"$alias\", \"server\": \"$server\", \"user\": \"$user\", \"password\": \"$password\", \"port\": \"$port\"} ]"
+        if [[ ! -f "$CONFIG_FILE" ]]; then
+            $PLIST_BUDDY -c "Add :Servers array" "$CONFIG_FILE"
         fi
 
-        echo "$config_data" > "$CONFIG_FILE"
+        $PLIST_BUDDY -c "Add :Servers:0 dict" "$CONFIG_FILE"
+        $PLIST_BUDDY -c "Add :Servers:0:Alias string $alias" "$CONFIG_FILE"
+        $PLIST_BUDDY -c "Add :Servers:0:Server string $server" "$CONFIG_FILE"
+        $PLIST_BUDDY -c "Add :Servers:0:User string $user" "$CONFIG_FILE"
+        $PLIST_BUDDY -c "Add :Servers:0:Password string $password" "$CONFIG_FILE"
+        $PLIST_BUDDY -c "Add :Servers:0:Port string $port" "$CONFIG_FILE"
+
+        echo "配置已保存。"
     else
         echo "连接失败，请检查输入的信息。"
         exit 1
@@ -118,9 +98,9 @@ activate_ios7_9() {
     mkdir -p "$TEMP_DIR"
     scp -P "$port" "$user@$server:/$mnt/mobile/Library/Caches/com.apple.MobileGestalt.plist" "$TEMP_DIR/"
 
-    "$JQ_BIN" --arg key "a6vjPkzcRjrsXmniFsm0dg" --argjson value true '.[$key] = $value' "$TEMP_DIR/com.apple.MobileGestalt.plist" > "$TEMP_DIR/com.apple.MobileGestalt_modified.plist"
+    $PLIST_BUDDY -c "Add :a6vjPkzcRjrsXmniFsm0dg bool true" "$TEMP_DIR/com.apple.MobileGestalt.plist"
 
-    scp -P "$port" "$TEMP_DIR/com.apple.MobileGestalt_modified.plist" "$user@$server:/$mnt/mobile/Library/Caches/com.apple.MobileGestalt.plist"
+    scp -P "$port" "$TEMP_DIR/com.apple.MobileGestalt.plist" "$user@$server:/$mnt/mobile/Library/Caches/com.apple.MobileGestalt.plist"
 
     echo "iOS 7-9 激活完成，正在清理临时文件..."
     rm -rf "$TEMP_DIR"
@@ -134,8 +114,6 @@ sftp_manager() {
 
 # 主菜单
 main_menu() {
-    install_dependencies
-
     while true; do
         echo "32位iPhone SSHRamdisk操作工具"
         echo "1. 连接设备"

@@ -2,35 +2,14 @@
 
 # 定义目录变量
 DATA_DIR="data"
-DEPENDENCIES_DIR="${DATA_DIR}/dependencies"
 TEMP_DIR="${DATA_DIR}/temp"
+
+# 定义 PlistBuddy 路径
+PLISTBUDDY="/usr/libexec/PlistBuddy"
 
 # 创建必要的目录结构
 setup_directories() {
     mkdir -p "${TEMP_DIR}"
-    mkdir -p "${DEPENDENCIES_DIR}"
-}
-
-# 检查并下载 jq 依赖，根据平台选择合适的二进制
-check_and_install_jq() {
-    if ! command -v "${DEPENDENCIES_DIR}/jq" &> /dev/null; then
-        echo "未找到 jq，正在下载..."
-        arch=$(uname -m)
-        case "$arch" in
-            arm64)
-                curl -L -o "${DEPENDENCIES_DIR}/jq" https://github.com/jqlang/jq/releases/download/jq-1.7/jq-osx-arm64
-                ;;
-            x86_64)
-                curl -L -o "${DEPENDENCIES_DIR}/jq" https://github.com/jqlang/jq/releases/download/jq-1.7/jq-osx-amd64
-                ;;
-            *)
-                echo "错误：不支持的平台架构：$arch。请手动下载适合的 jq 二进制。"
-                exit 1
-                ;;
-        esac
-        chmod +x "${DEPENDENCIES_DIR}/jq"
-        export PATH=$PATH:$(pwd)/${DEPENDENCIES_DIR}
-    fi
 }
 
 # 检查 expect 是否存在
@@ -42,34 +21,64 @@ check_expect() {
     return 0
 }
 
-# 初始化 config.json（如果不存在）
+# 初始化 config.plist（如果不存在）
 init_config() {
-    if [ ! -f "${DATA_DIR}/config.json" ]; then
-        echo "[]" > "${DATA_DIR}/config.json"
+    if [ ! -f "${DATA_DIR}/config.plist" ]; then
+        # 创建空的 plist 文件，包含 configurations 数组
+        echo '<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>configurations</key>
+    <array/>
+</dict>
+</plist>' > "${DATA_DIR}/config.plist"
     fi
 }
 
 # 列出所有配置的别名
 list_aliases() {
-    "${DEPENDENCIES_DIR}/jq" -r '.[].alias' "${DATA_DIR}/config.json"
+    local config_count=$(${PLISTBUDDY} -c "Print configurations:" "${DATA_DIR}/config.plist" | grep -c "Dict {")
+    if [ "$config_count" -eq 0 ]; then
+        return
+    fi
+    for ((i=0; i<config_count; i++)); do
+        ${PLISTBUDDY} -c "Print configurations:$i:alias" "${DATA_DIR}/config.plist" 2>/dev/null
+    done
 }
 
 # 根据别名加载配置
 load_config_by_alias() {
     local selected_alias="$1"
-    alias=$("${DEPENDENCIES_DIR}/jq" -r ".[] | select(.alias == \"$selected_alias\") | .alias" "${DATA_DIR}/config.json")
-    server_address=$("${DEPENDENCIES_DIR}/jq" -r ".[] | select(.alias == \"$selected_alias\") | .server_address" "${DATA_DIR}/config.json")
-    username=$("${DEPENDENCIES_DIR}/jq" -r ".[] | select(.alias == \"$selected_alias\") | .username" "${DATA_DIR}/config.json")
-    password=$("${DEPENDENCIES_DIR}/jq" -r ".[] | select(.alias == \"$selected_alias\") | .password" "${DATA_DIR}/config.json")
-    port=$("${DEPENDENCIES_DIR}/jq" -r ".[] | select(.alias == \"$selected_alias\") | .port" "${DATA_DIR}/config.json")
-    mount_point=$("${DEPENDENCIES_DIR}/jq" -r ".[] | select(.alias == \"$selected_alias\") | .mount_point" "${DATA_DIR}/config.json")
+    local config_count=$(${PLISTBUDDY} -c "Print configurations:" "${DATA_DIR}/config.plist" | grep -c "Dict {")
+    if [ "$config_count" -eq 0 ]; then
+        return 1
+    fi
+    for ((i=0; i<config_count; i++)); do
+        local alias_value=$(${PLISTBUDDY} -c "Print configurations:$i:alias" "${DATA_DIR}/config.plist" 2>/dev/null)
+        if [ "$alias_value" = "$selected_alias" ]; then
+            alias=$(${PLISTBUDDY} -c "Print configurations:$i:alias" "${DATA_DIR}/config.plist")
+            server_address=$(${PLISTBUDDY} -c "Print configurations:$i:server_address" "${DATA_DIR}/config.plist")
+            username=$(${PLISTBUDDY} -c "Print configurations:$i:username" "${DATA_DIR}/config.plist")
+            password=$(${PLISTBUDDY} -c "Print configurations:$i:password" "${DATA_DIR}/config.plist")
+            port=$(${PLISTBUDDY} -c "Print configurations:$i:port" "${DATA_DIR}/config.plist")
+            mount_point=$(${PLISTBUDDY} -c "Print configurations:$i:mount_point" "${DATA_DIR}/config.plist")
+            return 0
+        fi
+    done
+    return 1
 }
 
 # 保存新配置
 save_config() {
-    local temp_config=$(mktemp)
-    "${DEPENDENCIES_DIR}/jq" ". += [{\"alias\": \"$alias\", \"server_address\": \"$server_address\", \"username\": \"$username\", \"password\": \"$password\", \"port\": \"$port\", \"mount_point\": \"$mount_point\"}]" "${DATA_DIR}/config.json" > "$temp_config"
-    mv "$temp_config" "${DATA_DIR}/config.json"
+    local config_count=$(${PLISTBUDDY} -c "Print configurations:" "${DATA_DIR}/config.plist" | grep -c "Dict {")
+    ${PLISTBUDDY} -c "Add configurations:$config_count dict" "${DATA_DIR}/config.plist"
+    ${PLISTBUDDY} -c "Add configurations:$config_count:alias string \"$alias\"" "${DATA_DIR}/config.plist"
+    ${PLISTBUDDY} -c "Add configurations:$config_count:server_address string \"$server_address\"" "${DATA_DIR}/config.plist"
+    ${PLISTBUDDY} -c "Add configurations:$config_count:username string \"$username\"" "${DATA_DIR}/config.plist"
+    ${PLISTBUDDY} -c "Add configurations:$config_count:password string \"$password\"" "${DATA_DIR}/config.plist"
+    ${PLISTBUDDY} -c "Add configurations:$config_count:port string \"$port\"" "${DATA_DIR}/config.plist"
+    ${PLISTBUDDY} -c "Add configurations:$config_count:mount_point string \"$mount_point\"" "${DATA_DIR}/config.plist"
 }
 
 # 测试 SSH 连接
@@ -89,7 +98,7 @@ connect_device() {
         read -p "请输入要加载的别名（或输入 'new' 新建配置）： " selected_alias
         if [ "$selected_alias" != "new" ]; then
             load_config_by_alias "$selected_alias"
-            if [ -n "$alias" ]; then
+            if [ $? -eq 0 ]; then
                 echo "已加载配置：$alias ($server_address)。"
                 return
             else
@@ -111,7 +120,8 @@ connect_device() {
         echo "连接成功。正在保存配置..."
         save_config
     else
-        echo "连接失败。请检查输入信息。"
+        echo "连接失败，请检查输入信息。配置未保存。"
+        return 1
     fi
 }
 
@@ -157,7 +167,7 @@ activate_ios7_9() {
         return
     fi
 
-    /usr/libexec/PlistBuddy -c "Add a6vjPkzcRjrsXmniFsm0dg bool true" "${TEMP_DIR}/com.apple.MobileGestalt.plist" &> /dev/null
+    ${PLISTBUDDY} -c "Add a6vjPkzcRjrsXmniFsm0dg bool true" "${TEMP_DIR}/com.apple.MobileGestalt.plist" &> /dev/null
     if [ $? -ne 0 ]; then
         echo "错误：修改 com.apple.MobileGestalt.plist 文件失败。"
         return
@@ -213,7 +223,6 @@ EOF
 # 主菜单
 main_menu() {
     setup_directories
-    check_and_install_jq
     init_config
 
     while true; do

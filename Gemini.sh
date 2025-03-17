@@ -8,53 +8,31 @@ port=""
 mnt_dir=""
 
 # 目录变量
-DEPENDENCIES_DIR="data/dependencies"
 CONFIG_DIR="data"
 TEMP_DIR="data/temp"
 LOCKDOWND_FILE="data/lockdownd"
-CONFIG_FILE="$CONFIG_DIR/config.json"
+CONFIG_FILE="$CONFIG_DIR/config.plist"
 TEMP_PLIST="$TEMP_DIR/com.apple.MobileGestalt.plist"
-JQ_FILE="$DEPENDENCIES_DIR/jq"
+PLUTIL="/usr/libexec/PlistBuddy"
 
 # 创建目录
-mkdir -p "$DEPENDENCIES_DIR"
 mkdir -p "$TEMP_DIR"
-
-# 检查 jq 是否存在，如果不存在则下载
-if [ ! -f "$JQ_FILE" ]; then
-    echo "检测到 jq 不存在，正在下载..."
-    # 获取平台架构
-    ARCH=$(uname -m)
-    # 根据平台选择 jq 下载链接
-    case "$ARCH" in
-        x86_64)
-            JQ_URL="https://github.com/stedolan/jq/releases/download/jq-1.6/jq-osx-amd64"
-            ;;
-        arm64)
-            JQ_URL="https://github.com/stedolan/jq/releases/download/jq-1.6/jq-osx-arm64"
-            ;;
-        *)
-            echo "不支持的平台架构：$ARCH"
-            exit 1
-            ;;
-    esac
-    curl -L -o "$JQ_FILE" "$JQ_URL"
-    chmod +x "$JQ_FILE"
-    echo "jq 下载完成！"
-fi
 
 # 加载配置文件
 load_config() {
     if [ -f "$CONFIG_FILE" ]; then
-        config=$(cat "$CONFIG_FILE")
+        config=$("$PLUTIL" -c "Print" "$CONFIG_FILE")
     else
-        config="{}"
+        config=""
     fi
 }
 
 # 保存配置文件
 save_config() {
-    echo "$config" > "$CONFIG_FILE"
+    "$PLUTIL" -c "Clear" "$CONFIG_FILE"
+    for key in "${!config_data[@]}"; do
+        "$PLUTIL" -c "Add :$key string ${config_data[$key]}" "$CONFIG_FILE"
+    done
 }
 
 # 测试 SSH 连接
@@ -72,20 +50,19 @@ test_ssh_connection() {
 # 连接设备
 connect_device() {
     load_config
-    if [[ $(echo "$config" | "$JQ_FILE" -r 'keys | length') -gt 0 ]]; then
+    if [[ -n "$config" ]]; then
         echo "已保存的服务器："
-        echo "$config" | "$JQ_FILE" -r 'keys[]' | while read alias; do
+        "$PLUTIL" -c "Print :Aliases" "$CONFIG_FILE" | while read alias; do
             echo "- $alias"
         done
         read -p "是否选择已保存的服务器？ (y/n): " choice
         if [[ "$choice" == "y" ]]; then
             read -p "请输入服务器别名： " alias
-            server_data=$(echo "$config" | "$JQ_FILE" -r ".[\"$alias\"]")
-            if [[ -n "$server_data" ]]; then
-                address=$(echo "$server_data" | "$JQ_FILE" -r ".address")
-                username=$(echo "$server_data" | "$JQ_FILE" -r ".username")
-                password=$(echo "$server_data" | "$JQ_FILE" -r ".password")
-                port=$(echo "$server_data" | "$JQ_FILE" -r ".port")
+            address=$("$PLUTIL" -c "Print :$alias:address" "$CONFIG_FILE")
+            username=$("$PLUTIL" -c "Print :$alias:username" "$CONFIG_FILE")
+            password=$("$PLUTIL" -c "Print :$alias:password" "$CONFIG_FILE")
+            port=$("$PLUTIL" -c "Print :$alias:port" "$CONFIG_FILE")
+            if [[ -n "$address" ]]; then
                 return 0
             else
                 echo "未找到该服务器！"
@@ -100,7 +77,12 @@ connect_device() {
     read -p "端口号： " port
     if test_ssh_connection; then
         echo "服务器测试成功，配置已保存！"
-        config=$(echo "$config" | "$JQ_FILE" --arg alias "$alias" --arg address "$address" --arg username "$username" --arg password "$password" --arg port "$port" '. + { ($alias): {address: $address, username: $username, password: $password, port: $port} }')
+        # 先将配置数据存储在关联数组中
+        config_data["$alias:address"]="$address"
+        config_data["$alias:username"]="$username"
+        config_data["$alias:password"]="$password"
+        config_data["$alias:port"]="$port"
+        # 然后保存配置文件
         save_config
         return 0
     else
@@ -123,7 +105,7 @@ activate_ios_5_6() {
 # iOS 7-iOS 9 激活
 activate_ios_7_9() {
     scp -P "$port" "$username@$address:$mnt_dir/mobile/Library/Caches/com.apple.MobileGestalt.plist" "$TEMP_PLIST"
-    plutil -replace "a6vjPkzcRjrsXmniFsm0dg" -bool true "$TEMP_PLIST"
+    "$PLUTIL" -replace "a6vjPkzcRjrsXmniFsm0dg" -bool true "$TEMP_PLIST"
     scp -P "$port" "$TEMP_PLIST" "$username@$address:$mnt_dir/mobile/Library/Caches/com.apple.MobileGestalt.plist"
     if [ $? -eq 0 ]; then
         echo "激活成功！"

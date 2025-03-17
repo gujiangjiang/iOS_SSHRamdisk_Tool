@@ -3,47 +3,13 @@
 # 定义程序目录
 PROGRAM_DIR=$(dirname "$0")
 DATA_DIR="$PROGRAM_DIR/data"
-DEPENDENCIES_DIR="$DATA_DIR/dependencies"
-JSON_PARSER="$DEPENDENCIES_DIR/jq"
-CONFIG_FILE="$DATA_DIR/config.json"
+CONFIG_FILE="$DATA_DIR/config.plist"
 TEMP_DIR="$DATA_DIR/temp"
 LOCKDOWND_FILE="$DATA_DIR/lockdownd"
 
-# 创建数据目录、依赖目录和临时目录
+# 创建数据目录和临时目录
 mkdir -p "$DATA_DIR"
-mkdir -p "$DEPENDENCIES_DIR"
 mkdir -p "$TEMP_DIR"
-
-# 获取系统架构
-get_architecture() {
-    case $(uname -m) in
-        x86_64) echo "amd64" ;;
-        arm64) echo "arm64" ;;
-        *) echo "unsupported" ;;
-    esac
-}
-
-# 下载jq
-download_jq() {
-    local ARCH=$(get_architecture)
-    if [[ "$ARCH" == "unsupported" ]]; then
-        echo "错误：不支持的系统架构。"
-        exit 1
-    fi
-
-    if ! command -v "$JSON_PARSER" &> /dev/null; then
-        echo "下载jq..."
-        if [[ "$ARCH" == "amd64" ]]; then
-            curl -L "https://github.com/stedolan/jq/releases/download/jq-1.6/jq-osx-amd64" -o "$JSON_PARSER"
-        elif [[ "$ARCH" == "arm64" ]]; then
-            curl -L "https://github.com/stedolan/jq/releases/download/jq-1.6/jq-osx-arm64" -o "$JSON_PARSER"
-        fi
-        chmod +x "$JSON_PARSER"
-    fi
-}
-
-# 检查并下载依赖
-download_jq
 
 # 主菜单
 main_menu() {
@@ -84,11 +50,11 @@ connect_device() {
 # 加载配置
 load_config() {
     echo "加载配置..."
-    SERVER_ALIAS=$($JSON_PARSER -r '.alias' "$CONFIG_FILE")
-    SERVER_ADDRESS=$($JSON_PARSER -r '.address' "$CONFIG_FILE")
-    USERNAME=$($JSON_PARSER -r '.username' "$CONFIG_FILE")
-    PASSWORD=$($JSON_PARSER -r '.password' "$CONFIG_FILE")
-    PORT=$($JSON_PARSER -r '.port' "$CONFIG_FILE")
+    SERVER_ALIAS=$(/usr/libexec/PlistBuddy -c "Print alias" "$CONFIG_FILE")
+    SERVER_ADDRESS=$(/usr/libexec/PlistBuddy -c "Print address" "$CONFIG_FILE")
+    USERNAME=$(/usr/libexec/PlistBuddy -c "Print username" "$CONFIG_FILE")
+    PASSWORD=$(/usr/libexec/PlistBuddy -c "Print password" "$CONFIG_FILE")
+    PORT=$(/usr/libexec/PlistBuddy -c "Print port" "$CONFIG_FILE")
     echo "配置加载完成: $SERVER_ALIAS"
 }
 
@@ -113,14 +79,11 @@ new_config() {
 # 保存配置
 save_config() {
     echo "保存配置..."
-    CONFIG=$(jq -n \
-        --arg alias "$SERVER_ALIAS" \
-        --arg address "$SERVER_ADDRESS" \
-        --arg username "$USERNAME" \
-        --arg password "$PASSWORD" \
-        --arg port "$PORT" \
-        '{alias: $alias, address: $address, username: $username, password: $password, port: $port}')
-    echo "$CONFIG" > "$CONFIG_FILE"
+    /usr/libexec/PlistBuddy -c "Add alias string '$SERVER_ALIAS'" "$CONFIG_FILE" > /dev/null
+    /usr/libexec/PlistBuddy -c "Add address string '$SERVER_ADDRESS'" "$CONFIG_FILE" > /dev/null
+    /usr/libexec/PlistBuddy -c "Add username string '$USERNAME'" "$CONFIG_FILE" > /dev/null
+    /usr/libexec/PlistBuddy -c "Add password string '$PASSWORD'" "$CONFIG_FILE" > /dev/null
+    /usr/libexec/PlistBuddy -c "Add port string '$PORT'" "$CONFIG_FILE" > /dev/null
 }
 
 # 一键工厂激活iOS
@@ -160,8 +123,11 @@ activate_ios7_9() {
     read -p "请输入SSHRamdisk挂载目录 (如mnt1, mnt2等): " MOUNT_DIR
     echo "开始iOS7-iOS9激活..."
     scp -P "$PORT" "$USERNAME@$SERVER_ADDRESS:/$MOUNT_DIR/mobile/Library/Caches/com.apple.MobileGestalt.plist" "$TEMP_DIR/"
-    $JSON_PARSER -s '{"a6vjPkzcRjrsXmniFsm0dg": true}' "$TEMP_DIR/com.apple.MobileGestalt.plist" > "$TEMP_DIR/com.apple.MobileGestalt_modified.plist"
-    scp -P "$PORT" "$TEMP_DIR/com.apple.MobileGestalt_modified.plist" "$USERNAME@$SERVER_ADDRESS:/$MOUNT_DIR/mobile/Library/Caches/com.apple.MobileGestalt.plist"
+    
+    # 使用PlistBuddy修改plist文件
+    /usr/libexec/PlistBuddy -c "Add a6vjPkzcRjrsXmniFsm0dg bool true" "$TEMP_DIR/com.apple.MobileGestalt.plist"
+    
+    scp -P "$PORT" "$TEMP_DIR/com.apple.MobileGestalt.plist" "$USERNAME@$SERVER_ADDRESS:/$MOUNT_DIR/mobile/Library/Caches/com.apple.MobileGestalt.plist"
     if [[ $? -eq 0 ]]; then
         echo "激活成功"
         # 删除temp文件夹
