@@ -15,6 +15,10 @@ CONFIG_FILE="$CONFIG_DIR/config.plist"
 TEMP_PLIST="$TEMP_DIR/com.apple.MobileGestalt.plist"
 PLUTIL="/usr/libexec/PlistBuddy"
 
+# 提示信息
+SUCCESS_BYPASS="成功绕过 iCloud 激活锁！"
+FAILED_BYPASS="绕过 iCloud 激活锁失败！"
+
 # 创建目录
 mkdir -p "$TEMP_DIR"
 
@@ -117,17 +121,23 @@ activate_ios_7_9() {
     fi
 }
 
+# 读取挂载点
+read_mount_point() {
+    read -p "请输入 SSHRamdisk 挂载目录 (例如 mnt1)： " mnt_dir
+}
+
 # 一键工厂激活 iOS
 factory_activate_ios() {
     if [[ -z "$address" ]]; then
         echo "请先连接设备！"
         return 1
     fi
-    read -p "该激活无法支持 SIM 卡及通话，是否了解？ (y/n): " choice
+    read_mount_point
+    echo "该激活无法支持 SIM 卡及通话，是否了解？ (y/n): "
+    read -p "请选择： " choice
     if [[ "$choice" != "y" ]]; then
         return 1
     fi
-    read -p "请输入 SSHRamdisk 挂载目录 (例如 mnt1)： " mnt_dir
     echo "选择激活方式："
     echo "1. iOS 5-iOS 6 激活"
     echo "2. iOS 7-iOS 9 激活"
@@ -151,7 +161,7 @@ bypass_icloud_activation_lock() {
         echo "请先连接设备！"
         return 1
     fi
-    read -p "请输入 SSHRamdisk 挂载目录 (例如 mnt1)： " mnt_dir
+    read_mount_point
     echo "一键绕过 iCloud 激活锁功能只能绕过，设备仍处于未激活状态，无法正常使用 iTunes 同步及爱思助手等设备安装应用，建议使用【一键工厂激活 iOS】功能。"
     read -p "是否跳转到【一键工厂激活 iOS】？ (y/n): " choice
     if [[ "$choice" == "y" ]]; then
@@ -161,12 +171,12 @@ bypass_icloud_activation_lock() {
     ssh -o StrictHostKeyChecking=no "$username@$address" -p "$port" "rm -rf $mnt_dir/Applications/Setup.app"
     if [ $? -eq 0 ]; then
         if ssh -o StrictHostKeyChecking=no "$username@$address" -p "$port" "test -e $mnt_dir/Applications/Setup.app"; then
-            echo "绕过 iCloud 激活锁失败！"
+            echo "$FAILED_BYPASS"
         else
-            echo "成功绕过 iCloud 激活锁！"
+            echo "$SUCCESS_BYPASS"
         fi
     else
-        echo "绕过 iCloud 激活锁失败！"
+        echo "$FAILED_BYPASS"
     fi
 }
 

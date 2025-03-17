@@ -12,6 +12,41 @@ mkdir -p "$DATA_DIR" "$TEMP_DIR"
 # 定义PlistBuddy路径
 PLIST_BUDDY="/usr/libexec/PlistBuddy"
 
+# SSH连接函数
+ssh_execute() {
+    local username=$1
+    local password=$2
+    local port=$3
+    local command=$4
+    sshpass -p "$password" ssh -p "$port" "$username@localhost" "$command"
+}
+
+# 保存配置
+save_config() {
+    local alias=$1
+    local username=$2
+    local password=$3
+    local port=$4
+    $PLIST_BUDDY -c "Set :alias '$alias'" "$CONFIG_PLIST"
+    $PLIST_BUDDY -c "Set :username '$username'" "$CONFIG_PLIST"
+    $PLIST_BUDDY -c "Set :password '$password'" "$CONFIG_PLIST"
+    $PLIST_BUDDY -c "Set :port $port" "$CONFIG_PLIST"
+    echo "配置已保存。"
+}
+
+# 加载配置
+load_config() {
+    if [ -f "$CONFIG_PLIST" ]; then
+        alias=$($PLIST_BUDDY -c "Print :alias" "$CONFIG_PLIST")
+        username=$($PLIST_BUDDY -c "Print :username" "$CONFIG_PLIST")
+        password=$($PLIST_BUDDY -c "Print :password" "$CONFIG_PLIST")
+        port=$($PLIST_BUDDY -c "Print :port" "$CONFIG_PLIST")
+        return 0
+    else
+        return 1
+    fi
+}
+
 # 主菜单
 main_menu() {
     echo "32位iPhone SSHRamdisk操作工具"
@@ -33,15 +68,14 @@ main_menu() {
 
 # 连接设备
 connect_device() {
-    if [ -f "$CONFIG_PLIST" ]; then
-        echo "存在已保存的数据，是否一键引用？(y/n)"
+    if load_config; then
+        echo "已保存配置，是否直接使用？(y/n)"
         read choice
         if [ "$choice" = "y" ]; then
-            alias=$($PLIST_BUDDY -c "Print :alias" "$CONFIG_PLIST")
-            username=$($PLIST_BUDDY -c "Print :username" "$CONFIG_PLIST")
-            password=$($PLIST_BUDDY -c "Print :password" "$CONFIG_PLIST")
-            port=$($PLIST_BUDDY -c "Print :port" "$CONFIG_PLIST")
-            echo "引用配置: $alias"
+            echo "使用已保存的配置："
+            echo "别名: $alias"
+            echo "用户名: $username"
+            echo "端口: $port"
         else
             create_new_config
         fi
@@ -55,33 +89,20 @@ connect_device() {
 create_new_config() {
     read -p "请输入服务器别名: " alias
     read -p "请输入用户名: " username
-    read -p "请输入密码: " password
+    read -s -p "请输入密码: " password && echo
     read -p "请输入端口号: " port
     save_config "$alias" "$username" "$password" "$port"
 }
 
-# 保存配置
-save_config() {
-    local alias=$1
-    local username=$2
-    local password=$3
-    local port=$4
-    $PLIST_BUDDY -c "Add :alias string $alias" "$CONFIG_PLIST" 2>/dev/null || $PLIST_BUDDY -c "Set :alias $alias" "$CONFIG_PLIST"
-    $PLIST_BUDDY -c "Add :username string $username" "$CONFIG_PLIST" 2>/dev/null || $PLIST_BUDDY -c "Set :username $username" "$CONFIG_PLIST"
-    $PLIST_BUDDY -c "Add :password string $password" "$CONFIG_PLIST" 2>/dev/null || $PLIST_BUDDY -c "Set :password $password" "$CONFIG_PLIST"
-    $PLIST_BUDDY -c "Add :port integer $port" "$CONFIG_PLIST" 2>/dev/null || $PLIST_BUDDY -c "Set :port $port" "$CONFIG_PLIST"
-    echo "配置已保存。"
-}
-
-# 测试SSH连接并保存配置
+# 测试SSH连接
 test_ssh_connection() {
     echo "正在测试SSH连接..."
-    if sshpass -p "$password" ssh -p "$port" "$username@localhost" echo "连接成功"; then
-        echo "服务器测试成功，配置已保存。"
+    if ssh_execute "$username" "$password" "$port" "echo '连接成功'"; then
+        echo "SSH连接测试成功！"
     else
-        echo "连接失败，请检查配置。"
+        echo "SSH连接失败，请检查配置。"
+        main_menu
     fi
-    main_menu
 }
 
 # 一键绕过iCloud激活锁
@@ -91,11 +112,7 @@ bypass_icloud_lock() {
     echo "建议优先使用【一键工厂激活iOS】功能。"
     read -p "是否继续？(y/n): " choice
     if [ "$choice" = "y" ]; then
-        if [ -f "$CONFIG_PLIST" ]; then
-            port=$($PLIST_BUDDY -c "Print :port" "$CONFIG_PLIST")
-            username=$($PLIST_BUDDY -c "Print :username" "$CONFIG_PLIST")
-            password=$($PLIST_BUDDY -c "Print :password" "$CONFIG_PLIST")
-        else
+        if ! load_config; then
             echo "请先连接设备并保存配置。"
             main_menu
             return
@@ -103,10 +120,10 @@ bypass_icloud_lock() {
 
         read -p "请输入SSHRamdisk挂载目录（如mnt1、mnt2等）: " mount_dir
         echo "正在尝试绕过iCloud激活锁..."
-        sshpass -p "$password" ssh -p "$port" "$username@localhost" "rm -rf /$mount_dir/Applications/Setup.app"
+        ssh_execute "$username" "$password" "$port" "rm -rf /$mount_dir/Applications/Setup.app"
         sleep 2
-        sshpass -p "$password" ssh -p "$port" "$username@localhost" "if [ ! -d '/$mount_dir/Applications/Setup.app' ]; then echo 'Setup.app已删除'; else echo 'Setup.app仍然存在'; fi"
-        if sshpass -p "$password" ssh -p "$port" "$username@localhost" "test ! -d '/$mount_dir/Applications/Setup.app'"; then
+
+        if ssh_execute "$username" "$password" "$port" "test ! -d '/$mount_dir/Applications/Setup.app'"; then
             echo "成功绕过iCloud激活锁。"
             echo "设备仍处于未激活状态，建议进行进一步操作。"
         else
@@ -136,15 +153,13 @@ factory_activate_ios() {
     main_menu
 }
 
-# iOS5-iOS6激活
+# iOS5-iOS6激活（占位）
 activate_ios5_6() {
-    # iOS5-iOS6激活逻辑（保持原有代码）
     echo "iOS5-iOS6激活功能尚未实现。"
 }
 
-# iOS7-iOS9激活
+# iOS7-iOS9激活（占位）
 activate_ios7_9() {
-    # iOS7-iOS9激活逻辑（保持原有代码）
     echo "iOS7-iOS9激活功能尚未实现。"
 }
 
@@ -153,12 +168,12 @@ sftp_manager() {
     echo "请输入用户名: "
     read username
     echo "请输入密码: "
-    read -s password
+    read -s password && echo
     echo "请输入端口号: "
     read port
     sftp -P "$port" "$username@localhost"
     main_menu
 }
 
-# 主程序
+# 主程序入口
 main_menu

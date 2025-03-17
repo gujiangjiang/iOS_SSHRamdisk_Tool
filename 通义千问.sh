@@ -14,13 +14,14 @@ TEMP_DIR="$DATA_DIR/temp"
 PLIST_BUDDY="/usr/libexec/PlistBuddy"
 
 # 确保数据目录和临时目录存在，如果不存在则创建
-if [ ! -d "$DATA_DIR" ]; then mkdir -p "$DATA_DIR"; fi
-if [ ! -d "$TEMP_DIR" ]; then mkdir -p "$TEMP_DIR"; fi
+ensure_directories() {
+    if [ ! -d "$DATA_DIR" ]; then mkdir -p "$DATA_DIR"; fi
+    if [ ! -d "$TEMP_DIR" ]; then mkdir -p "$TEMP_DIR"; fi
+}
 
 # 加载配置文件，如果没有配置文件则创建一个基本的config.plist文件
 load_config() {
     if [ ! -f "$CONFIG_FILE" ]; then
-        # 创建基本的config.plist文件
         echo "<?xml version=\"1.0\" encoding=\"UTF-8\"?>
 <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">
 <plist version=\"1.0\">
@@ -30,7 +31,6 @@ load_config() {
 </dict>
 </plist>" > "$CONFIG_FILE"
     fi
-    # 读取配置文件中的服务器数量
     CONFIG_COUNT=$($PLIST_BUDDY -c "Print :Count" "$CONFIG_FILE")
 }
 
@@ -47,9 +47,7 @@ add_server_config() {
     read -p "请输入端口号: " port
     read -p "请输入挂载点 (例如, mnt1): " mount_point
 
-    test_connection "$alias" "$username" "$password" "$port"
-
-    if [ $? -eq 0 ]; then
+    if test_connection "$alias" "$username" "$password" "$port"; then
         # 增加服务器数量计数器
         CONFIG_COUNT=$((CONFIG_COUNT + 1))
         # 向配置文件中添加新的服务器配置
@@ -80,11 +78,7 @@ send "$password\r"
 expect eof
 log_user 1
 EOF
-    if grep -q "已连接到 $alias" /tmp/ssh_output.log; then
-        return 0
-    else
-        return 1
-    fi
+    grep -q "已连接到 $alias" /tmp/ssh_output.log
 }
 
 # 连接设备，加载或添加新的服务器配置
@@ -217,7 +211,8 @@ main_menu() {
     done
 }
 
-# 加载配置文件并启动主菜单
+# 初始化目录并加载配置文件
+ensure_directories
 load_config
 main_menu
 

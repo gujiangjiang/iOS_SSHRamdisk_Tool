@@ -10,47 +10,29 @@ LOCKDOWN_FILE="$DATA_DIR/lockdownd"
 # 创建必要目录
 mkdir -p "$DATA_DIR" "$TEMP_DIR"
 
-connect_device() {
+# 获取服务器配置信息
+get_server_config() {
     if [ -f "$CONFIG_FILE" ]; then
-        echo "存在已保存的数据，是否一键引用？(y/n)"
-        read choice
-        if [ "$choice" = "y" ]; then
-            # 获取配置项数量
-            config_count=$("$PLIST_BUDDY" -c "Print :configs:count" "$CONFIG_FILE")
-            for ((i = 0; i < config_count; i++)); do
-                alias=$("$PLIST_BUDDY" -c "Print :configs:$i:alias" "$CONFIG_FILE")
-                echo "$((i + 1)). $alias"
-            done
-            echo "请选择要引用的配置序号"
-            read selected
-            selected=$((selected - 1))
-            host=$("$PLIST_BUDDY" -c "Print :configs:$selected:host" "$CONFIG_FILE")
-            port=$("$PLIST_BUDDY" -c "Print :configs:$selected:port" "$CONFIG_FILE")
-            username=$("$PLIST_BUDDY" -c "Print :configs:$selected:username" "$CONFIG_FILE")
-            password=$("$PLIST_BUDDY" -c "Print :configs:$selected:password" "$CONFIG_FILE")
-        else
-            create_new_config
-            host=$("$PLIST_BUDDY" -c "Print :configs:0:host" "$CONFIG_FILE")
-            port=$("$PLIST_BUDDY" -c "Print :configs:0:port" "$CONFIG_FILE")
-            username=$("$PLIST_BUDDY" -c "Print :configs:0:username" "$CONFIG_FILE")
-            password=$("$PLIST_BUDDY" -c "Print :configs:0:password" "$CONFIG_FILE")
-        fi
+        config_count=$("$PLIST_BUDDY" -c "Print :configs:count" "$CONFIG_FILE")
+        for ((i = 0; i < config_count; i++)); do
+            alias=$("$PLIST_BUDDY" -c "Print :configs:$i:alias" "$CONFIG_FILE")
+            echo "$((i + 1)). $alias"
+        done
+        echo "请选择要使用的配置序号"
+        read selected
+        selected=$((selected - 1))
+        host=$("$PLIST_BUDDY" -c "Print :configs:$selected:host" "$CONFIG_FILE")
+        port=$("$PLIST_BUDDY" -c "Print :configs:$selected:port" "$CONFIG_FILE")
+        username=$("$PLIST_BUDDY" -c "Print :configs:$selected:username" "$CONFIG_FILE")
+        password=$("$PLIST_BUDDY" -c "Print :configs:$selected:password" "$CONFIG_FILE")
     else
-        create_new_config
-        host=$("$PLIST_BUDDY" -c "Print :configs:0:host" "$CONFIG_FILE")
-        port=$("$PLIST_BUDDY" -c "Print :configs:0:port" "$CONFIG_FILE")
-        username=$("$PLIST_BUDDY" -c "Print :configs:0:username" "$CONFIG_FILE")
-        password=$("$PLIST_BUDDY" -c "Print :configs:0:password" "$CONFIG_FILE")
+        echo "请先连接设备"
+        exit 1
     fi
-
-    ssh -o StrictHostKeyChecking=no -p "$port" "$username"@"$host" exit 2>/dev/null
-    if [ $? -eq 0 ]; then
-        echo "服务器测试成功，配置已保存"
-    else
-        echo "连接失败，请检查配置"
-    fi
+    echo "$host $port $username $password"
 }
 
+# 创建新的服务器配置
 create_new_config() {
     echo "请输入服务器别名"
     read alias
@@ -99,24 +81,63 @@ EOF
     fi
 }
 
-one_click_activate() {
+# 连接设备功能
+connect_device() {
     if [ -f "$CONFIG_FILE" ]; then
-        config_count=$("$PLIST_BUDDY" -c "Print :configs:count" "$CONFIG_FILE")
-        for ((i = 0; i < config_count; i++)); do
-            alias=$("$PLIST_BUDDY" -c "Print :configs:$i:alias" "$CONFIG_FILE")
-            echo "$((i + 1)). $alias"
-        done
-        echo "请选择要使用的配置序号"
-        read selected
-        selected=$((selected - 1))
-        host=$("$PLIST_BUDDY" -c "Print :configs:$selected:host" "$CONFIG_FILE")
-        port=$("$PLIST_BUDDY" -c "Print :configs:$selected:port" "$CONFIG_FILE")
-        username=$("$PLIST_BUDDY" -c "Print :configs:$selected:username" "$CONFIG_FILE")
-        password=$("$PLIST_BUDDY" -c "Print :configs:$selected:password" "$CONFIG_FILE")
+        echo "存在已保存的数据，是否一键引用？(y/n)"
+        read choice
+        if [ "$choice" = "y" ]; then
+            server_info=$(get_server_config)
+        else
+            create_new_config
+            server_info=$(get_server_config)
+        fi
     else
-        echo "请先连接设备"
+        create_new_config
+        server_info=$(get_server_config)
+    fi
+
+    IFS=' ' read -r host port username password <<< "$server_info"
+    ssh -o StrictHostKeyChecking=no -p "$port" "$username"@"$host" exit 2>/dev/null
+    if [ $? -eq 0 ]; then
+        echo "服务器测试成功，配置已保存"
+    else
+        echo "连接失败，请检查配置"
+    fi
+}
+
+# 一键绕过iCloud激活锁功能
+one_click_bypass_icloud() {
+    server_info=$(get_server_config)
+    IFS=' ' read -r host port username password <<< "$server_info"
+
+    echo "请输入SSHRamdisk挂载目录（通常为mnt1、mnt2等）"
+    read mount_dir
+
+    echo "一键绕过iCloud激活锁功能只能绕过，设备仍处于未激活状态，无法正常使用iTunes同步及爱思助手等设备安装应用，建议使用【一键工厂激活iOS】功能。是否跳转到【一键工厂激活iOS】？(y/n)"
+    read choice
+    if [ "$choice" = "y" ]; then
+        one_click_activate
         return
     fi
+
+    ssh -p "$port" "$username"@"$host" "rm -rf $mount_dir/Applications/Setup.app"
+    if [ $? -eq 0 ]; then
+        ssh -p "$port" "$username"@"$host" "[! -d $mount_dir/Applications/Setup.app ]"
+        if [ $? -eq 0 ]; then
+            echo "成功绕过iCloud激活锁"
+        else
+            echo "绕过失败，可能是文件删除后又恢复，或者删除操作未成功"
+        fi
+    else
+        echo "绕过失败，删除文件操作失败"
+    fi
+}
+
+# 一键工厂激活iOS功能
+one_click_activate() {
+    server_info=$(get_server_config)
+    IFS=' ' read -r host port username password <<< "$server_info"
 
     echo "该激活无法支持SIM卡及通话"
     read -p "按任意键继续..."
@@ -161,24 +182,10 @@ one_click_activate() {
     fi
 }
 
+# sftp文件管理器功能
 sftp_file_manager() {
-    if [ -f "$CONFIG_FILE" ]; then
-        config_count=$("$PLIST_BUDDY" -c "Print :configs:count" "$CONFIG_FILE")
-        for ((i = 0; i < config_count; i++)); do
-            alias=$("$PLIST_BUDDY" -c "Print :configs:$i:alias" "$CONFIG_FILE")
-            echo "$((i + 1)). $alias"
-        done
-        echo "请选择要使用的配置序号"
-        read selected
-        selected=$((selected - 1))
-        host=$("$PLIST_BUDDY" -c "Print :configs:$selected:host" "$CONFIG_FILE")
-        port=$("$PLIST_BUDDY" -c "Print :configs:$selected:port" "$CONFIG_FILE")
-        username=$("$PLIST_BUDDY" -c "Print :configs:$selected:username" "$CONFIG_FILE")
-        password=$("$PLIST_BUDDY" -c "Print :configs:$selected:password" "$CONFIG_FILE")
-    else
-        echo "请先连接设备"
-        return
-    fi
+    server_info=$(get_server_config)
+    IFS=' ' read -r host port username password <<< "$server_info"
 
     sftp -P "$port" "$username"@"$host" << EOF
 ls
@@ -187,21 +194,24 @@ exit
 EOF
 }
 
+# 主函数，提供操作菜单
 main() {
     while true; do
         clear
         echo "32位iPhone SSHRamdisk操作工具"
         echo "1. 连接设备"
-        echo "2. 一键工厂激活iOS"
-        echo "3. sftp文件管理器"
-        echo "4. 退出"
+        echo "2. 一键绕过iCloud激活锁"
+        echo "3. 一键工厂激活iOS"
+        echo "4. sftp文件管理器"
+        echo "5. 退出"
         read -p "请选择操作: " choice
 
         case $choice in
             1) connect_device ;;
-            2) one_click_activate ;;
-            3) sftp_file_manager ;;
-            4) break ;;
+            2) one_click_bypass_icloud ;;
+            3) one_click_activate ;;
+            4) sftp_file_manager ;;
+            5) break ;;
             *) echo "无效的选择，请重新输入" ;;
         esac
         read -p "按任意键继续..."
