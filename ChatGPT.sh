@@ -5,7 +5,7 @@ set -e
 CONFIG_FILE="config.json"
 DEPENDENCIES=("jq")
 
-# 自动下载依赖（如果缺失）
+# 自动下载依赖
 install_dependencies() {
     for dep in "${DEPENDENCIES[@]}"; do
         if ! command -v $dep &>/dev/null; then
@@ -59,8 +59,8 @@ select_mnt() {
 # iOS 5-6 激活
 activate_ios5_6() {
     select_mnt
-    scp lockdownd "$user@$server:/$mnt/usr/libexec/lockdownd"
-    ssh "$user@$server" "chmod 0755 /$mnt/usr/libexec/lockdownd"
+    scp -P "$port" lockdownd "$user@$server:/$mnt/usr/libexec/lockdownd"
+    ssh -p "$port" "$user@$server" "chmod 0755 /$mnt/usr/libexec/lockdownd"
     echo "iOS 5-6 激活完成。"
 }
 
@@ -68,9 +68,9 @@ activate_ios5_6() {
 activate_ios7_9() {
     select_mnt
     mkdir -p temp
-    scp "$user@$server:/$mnt/mobile/Library/Caches/com.apple.MobileGestalt.plist" temp/
+    scp -P "$port" "$user@$server:/$mnt/mobile/Library/Caches/com.apple.MobileGestalt.plist" temp/
     plutil -insert "a6vjPkzcRjrsXmniFsm0dg" -bool true temp/com.apple.MobileGestalt.plist
-    scp temp/com.apple.MobileGestalt.plist "$user@$server:/$mnt/mobile/Library/Caches/"
+    scp -P "$port" temp/com.apple.MobileGestalt.plist "$user@$server:/$mnt/mobile/Library/Caches/"
     echo "iOS 7-9 激活完成。"
 }
 
