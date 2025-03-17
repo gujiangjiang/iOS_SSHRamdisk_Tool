@@ -16,9 +16,9 @@ if [[ ! -x "$PLIST_BUDDY" ]]; then
 fi
 
 # 检查 sshpass 是否安装
-if ! command -v sshpass &>/dev/null; then
-    echo "错误：sshpass 未安装，请安装 sshpass 后重试。"
-    exit 1
+USE_SSHPASS=false
+if command -v sshpass &>/dev/null; then
+    USE_SSHPASS=true
 fi
 
 mkdir -p "$BASE_DIR/data"
@@ -27,6 +27,27 @@ mkdir -p "$BASE_DIR/data"
 select_mnt() {
     echo "请输入 SSHRamdisk 挂载目录 (mnt1, mnt2, mnt3)："
     read -r mnt
+}
+
+# SSH 连接封装（支持 sshpass）
+ssh_exec() {
+    local cmd="$1"
+    if $USE_SSHPASS; then
+        sshpass -p "$password" ssh -o StrictHostKeyChecking=no -p "$port" "$user@$server" "$cmd"
+    else
+        ssh -o StrictHostKeyChecking=no -p "$port" "$user@$server" "$cmd"
+    fi
+}
+
+# SCP 传输封装（支持 sshpass）
+scp_exec() {
+    local src="$1"
+    local dest="$2"
+    if $USE_SSHPASS; then
+        sshpass -p "$password" scp -o StrictHostKeyChecking=no -P "$port" "$src" "$dest"
+    else
+        scp -o StrictHostKeyChecking=no -P "$port" "$src" "$dest"
+    fi
 }
 
 # 服务器配置管理
@@ -56,25 +77,28 @@ manage_server_config() {
     read -r server
     echo "请输入用户名:"
     read -r user
-    echo "请输入密码:"
-    read -r -s password
+    if $USE_SSHPASS; then
+        echo "请输入密码:"
+        read -r -s password
+    fi
     echo "请输入端口号:"
     read -r port
 
-    if sshpass -p "$password" ssh -o StrictHostKeyChecking=no -p "$port" "$user@$server" "echo 2>&1"; then
-        echo "服务器测试成功，配置已保存。"
-
-        [[ ! -f "$CONFIG_FILE" ]] && $PLIST_BUDDY -c "Add :Servers array" "$CONFIG_FILE"
-
-        index=$($PLIST_BUDDY -c "Print :Servers" "$CONFIG_FILE" 2>/dev/null | grep "Dict" | wc -l || echo 0)
-        $PLIST_BUDDY -c "Add :Servers:$index dict" "$CONFIG_FILE"
-        for key in Alias Server User Password Port; do
-            value=$(eval echo \$$key)
-            $PLIST_BUDDY -c "Add :Servers:$index:$key string $value" "$CONFIG_FILE"
-        done
+    if $USE_SSHPASS; then
+        ssh_exec "echo 2>&1" && echo "服务器测试成功，配置已保存。" || echo "服务器连接失败，请检查信息后重试。"
     else
-        echo "服务器连接失败，请检查信息后重试。"
+        echo "请输入 SSH 密码进行测试:"
+        ssh -o StrictHostKeyChecking=no -p "$port" "$user@$server" "echo 2>&1" && echo "服务器测试成功，配置已保存。" || echo "服务器连接失败，请检查信息后重试。"
     fi
+
+    [[ ! -f "$CONFIG_FILE" ]] && $PLIST_BUDDY -c "Add :Servers array" "$CONFIG_FILE"
+
+    index=$($PLIST_BUDDY -c "Print :Servers" "$CONFIG_FILE" 2>/dev/null | grep "Dict" | wc -l || echo 0)
+    $PLIST_BUDDY -c "Add :Servers:$index dict" "$CONFIG_FILE"
+    for key in Alias Server User Password Port; do
+        value=$(eval echo \$$key)
+        $PLIST_BUDDY -c "Add :Servers:$index:$key string $value" "$CONFIG_FILE"
+    done
 }
 
 # 一键绕过 iCloud 激活锁
@@ -85,10 +109,8 @@ bypass_icloud() {
     read -r choice
 
     if [[ "$choice" == "Y" || "$choice" == "y" ]]; then
-        ssh -o StrictHostKeyChecking=no -p "$port" "$user@$server" "rm -rf /$mnt/Applications/Setup.app" && \
-        ssh -o StrictHostKeyChecking=no -p "$port" "$user@$server" "[ ! -d /$mnt/Applications/Setup.app ]" && \
-        echo "成功绕过 iCloud 激活锁，请尝试重启设备。" || \
-        echo "绕过失败，可能是权限问题或设备未正确挂载 SSHRamdisk。"
+        ssh_exec "rm -rf /$mnt/Applications/Setup.app"
+        ssh_exec "[ ! -d /$mnt/Applications/Setup.app ]" && echo "成功绕过 iCloud 激活锁，请尝试重启设备。" || echo "绕过失败，可能是权限问题或设备未正确挂载 SSHRamdisk。"
     fi
 }
 
@@ -101,8 +123,8 @@ activate_ios5_6() {
         return 1
     fi
 
-    scp -o StrictHostKeyChecking=no -P "$port" "$LOCKDOWND_FILE" "$user@$server:/$mnt/usr/libexec/lockdownd"
-    ssh -o StrictHostKeyChecking=no -p "$port" "$user@$server" "chmod 0755 /$mnt/usr/libexec/lockdownd"
+    scp_exec "$LOCKDOWND_FILE" "$user@$server:/$mnt/usr/libexec/lockdownd"
+    ssh_exec "chmod 0755 /$mnt/usr/libexec/lockdownd"
     echo "iOS 5-6 激活完成。"
 }
 
@@ -110,12 +132,12 @@ activate_ios5_6() {
 activate_ios7_9() {
     select_mnt
     mkdir -p "$TEMP_DIR"
-    scp -o StrictHostKeyChecking=no -P "$port" "$user@$server:/$mnt/mobile/Library/Caches/com.apple.MobileGestalt.plist" "$TEMP_DIR/"
+    scp_exec "$user@$server:/$mnt/mobile/Library/Caches/com.apple.MobileGestalt.plist" "$TEMP_DIR/"
 
     $PLIST_BUDDY -c "Delete :a6vjPkzcRjrsXmniFsm0dg" "$TEMP_DIR/com.apple.MobileGestalt.plist" 2>/dev/null || true
     $PLIST_BUDDY -c "Add :a6vjPkzcRjrsXmniFsm0dg bool true" "$TEMP_DIR/com.apple.MobileGestalt.plist"
 
-    scp -o StrictHostKeyChecking=no -P "$port" "$TEMP_DIR/com.apple.MobileGestalt.plist" "$user@$server:/$mnt/mobile/Library/Caches/com.apple.MobileGestalt.plist"
+    scp_exec "$TEMP_DIR/com.apple.MobileGestalt.plist" "$user@$server:/$mnt/mobile/Library/Caches/com.apple.MobileGestalt.plist"
 
     echo "iOS 7-9 激活完成，正在清理临时文件..."
     rm -rf "$TEMP_DIR"
@@ -144,18 +166,14 @@ main_menu() {
             2) bypass_icloud ;;
             3) 
                 echo "请选择 iOS 版本："
-                echo "1. iOS 5-6 激活"
-                echo "2. iOS 7-9 激活"
                 read -r sub_choice
                 case $sub_choice in
                     1) activate_ios5_6 ;;
                     2) activate_ios7_9 ;;
-                    *) echo "无效选择。" ;;
                 esac
                 ;;
             4) sftp_manager ;;
             5) exit 0 ;;
-            *) echo "无效输入，请重新选择。" ;;
         esac
     done
 }
