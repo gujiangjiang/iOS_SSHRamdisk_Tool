@@ -1,210 +1,225 @@
 #!/bin/bash
 
-# 程序目录
-SCRIPT_DIR=$(dirname "$(realpath "$0")")
-DATA_DIR="$SCRIPT_DIR/data"
-DEPENDENCIES_DIR="$DATA_DIR/dependencies"
-CONFIG_FILE="$DATA_DIR/config.json"
-LOCKDOWND_FILE="$DATA_DIR/lockdownd"
+# 获取脚本所在的目录
+BASE_DIR=$(cd "$(dirname "$0")" && pwd)
+# 定义数据目录路径
+DATA_DIR="$BASE_DIR/data"
+# 定义配置文件路径
+CONFIG_FILE="$DATA_DIR/config.plist"
+# 定义lockdownd文件路径
+LOCKDOWND_PATH="$DATA_DIR/lockdownd"
+# 定义临时目录路径
 TEMP_DIR="$DATA_DIR/temp"
+# 定义PlistBuddy工具路径
+PLIST_BUDDY="/usr/libexec/PlistBuddy"
 
-# 创建必要的目录
-mkdir -p "$DATA_DIR" "$DEPENDENCIES_DIR" "$TEMP_DIR"
+# 确保数据目录和临时目录存在，如果不存在则创建
+if [ ! -d "$DATA_DIR" ]; then mkdir -p "$DATA_DIR"; fi
+if [ ! -d "$TEMP_DIR" ]; then mkdir -p "$TEMP_DIR"; fi
 
-# 自动下载依赖
-download_dependency() {
-    local name=$1
-    local url=$2
-    local path="$DEPENDENCIES_DIR/$name"
-
-    if [ ! -f "$path" ]; then
-        echo "Downloading $name..."
-        curl -o "$path" -L "$url"
-        chmod +x "$path"
-    fi
-}
-
-# 下载jq
-download_dependency jq "https://github.com/stedolan/jq/releases/download/jq-1.6/jq-linux64"
-
-# 主菜单
-main_menu() {
-    while true; do
-        clear
-        echo "32位iPhone SSHRamdisk操作工具"
-        echo "1. 连接设备"
-        echo "2. 一键工厂激活iOS"
-        echo "3. sftp文件管理器"
-        echo "0. 退出"
-        read -p "请选择: " choice
-
-        case $choice in
-            1) connect_device ;;
-            2) activate_ios ;;
-            3) sftp_manager ;;
-            0) exit 0 ;;
-            *) echo "无效的选择，请重新选择。" ;;
-        esac
-    done
-}
-
-# 保存配置
-save_config() {
-    local alias=$1
-    local username=$2
-    local password=$3
-    local port=$4
-    local mount_point=$5
-
-    if [ -f "$CONFIG_FILE" ]; then
-        config=$(cat "$CONFIG_FILE")
-        new_config=$(echo "$config" | jq --arg alias "$alias" --arg username "$username" --arg password "$password" --arg port "$port" --arg mount_point "$mount_point" '. + {($alias): {"username": $username, "password": $password, "port": $port, "mount_point": $mount_point}}')
-    else
-        new_config=$(jq -n --arg alias "$alias" --arg username "$username" --arg password "$password" --arg port "$port" --arg mount_point "$mount_point" '{"$alias": {"username": $username, "password": $password, "port": $port, "mount_point": $mount_point}}')
-    fi
-
-    echo "$new_config" > "$CONFIG_FILE"
-}
-
-# 加载配置
+# 加载配置文件，如果没有配置文件则创建一个基本的config.plist文件
 load_config() {
-    if [ -f "$CONFIG_FILE" ]; then
-        cat "$CONFIG_FILE"
+    if [ ! -f "$CONFIG_FILE" ]; then
+        # 创建基本的config.plist文件
+        echo "<?xml version=\"1.0\" encoding=\"UTF-8\"?>
+<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">
+<plist version=\"1.0\">
+<dict>
+    <key>Count</key>
+    <integer>0</integer>
+</dict>
+</plist>" > "$CONFIG_FILE"
+    fi
+    # 读取配置文件中的服务器数量
+    CONFIG_COUNT=$($PLIST_BUDDY -c "Print :Count" "$CONFIG_FILE")
+}
+
+# 保存配置文件，更新服务器数量
+save_config() {
+    $PLIST_BUDDY -c "Set :Count $CONFIG_COUNT" "$CONFIG_FILE"
+}
+
+# 添加新的服务器配置
+add_server_config() {
+    read -p "请输入服务器别名: " alias
+    read -p "请输入用户名: " username
+    password=$(getpass "请输入密码: ")
+    read -p "请输入端口号: " port
+    read -p "请输入挂载点 (例如, mnt1): " mount_point
+
+    test_connection "$alias" "$username" "$password" "$port"
+
+    if [ $? -eq 0 ]; then
+        # 增加服务器数量计数器
+        CONFIG_COUNT=$((CONFIG_COUNT + 1))
+        # 向配置文件中添加新的服务器配置
+        $PLIST_BUDDY -c "Add :$CONFIG_COUNT dict" "$CONFIG_FILE"
+        $PLIST_BUDDY -c "Add :$CONFIG_COUNT:Alias string $alias" "$CONFIG_FILE"
+        $PLIST_BUDDY -c "Add :$CONFIG_COUNT:Username string $username" "$CONFIG_FILE"
+        $PLIST_BUDDY -c "Add :$CONFIG_COUNT:Password string $password" "$CONFIG_FILE"
+        $PLIST_BUDDY -c "Add :$CONFIG_COUNT:Port integer $port" "$CONFIG_FILE"
+        $PLIST_BUDDY -c "Add :$CONFIG_COUNT:MountPoint string $mount_point" "$CONFIG_FILE"
+        save_config
+        echo "服务器配置已保存。"
     else
-        echo "{}"
+        echo "连接失败。配置未保存。"
     fi
 }
 
 # 测试SSH连接
-test_ssh_connection() {
-    local username=$1
-    local password=$2
-    local host=$3
+test_connection() {
+    local alias=$1
+    local username=$2
+    local password=$3
     local port=$4
-
-    sshpass -p "$password" ssh -o StrictHostKeyChecking=no -p "$port" "$username@$host" "echo 'Connection successful'"
-}
-
-# 连接设备
-connect_device() {
-    config=$(load_config)
-    aliases=$(echo "$config" | jq -r 'keys[]')
-
-    if [ -n "$aliases" ]; then
-        echo "存在已保存的数据，是否一键引用？(y/n)"
-        read -p "选择: " use_saved
-
-        if [ "$use_saved" == "y" ]; then
-            select_alias
-            return
-        fi
-    fi
-
-    read -p "服务器别名: " alias
-    read -p "用户名: " username
-    read -p "密码: " password
-    read -p "端口号: " port
-    read -p "挂载点 (例如 mnt1): " mount_point
-
-    if test_ssh_connection "$username" "$password" "localhost" "$port"; then
-        save_config "$alias" "$username" "$password" "$port" "$mount_point"
-        echo "服务器测试成功，配置已保存。"
-        sleep 2
-        main_menu
+    expect <<EOF
+log_user 0
+spawn ssh -o StrictHostKeyChecking=no -p "$port" "$username"@localhost echo "已连接到 $alias"
+expect "password:"
+send "$password\r"
+expect eof
+log_user 1
+EOF
+    if grep -q "已连接到 $alias" /tmp/ssh_output.log; then
+        return 0
     else
-        echo "连接失败，请检查配置。"
-        sleep 2
-        connect_device
+        return 1
     fi
 }
 
-# 选择别名
-select_alias() {
-    config=$(load_config)
-    aliases=$(echo "$config" | jq -r 'keys[]')
-
-    PS3="请选择别名: "
-    select alias in $aliases; do
-        if [ -n "$alias" ]; then
-            username=$(echo "$config" | jq -r ".\"$alias\".username")
-            password=$(echo "$config" | jq -r ".\"$alias\".password")
-            port=$(echo "$config" | jq -r ".\"$alias\".port")
-            mount_point=$(echo "$config" | jq -r ".\"$alias\".mount_point")
-
-            if test_ssh_connection "$username" "$password" "localhost" "$port"; then
-                echo "服务器测试成功，配置已加载。"
-                sleep 2
-                main_menu
-            else
-                echo "连接失败，请检查配置。"
-                sleep 2
-                connect_device
-            fi
+# 连接设备，加载或添加新的服务器配置
+connect_device() {
+    load_config
+    if [ "$CONFIG_COUNT" -gt 0 ]; then
+        echo "找到现有配置。是否要使用其中一个？ (y/n)"
+        read use_existing
+        if [ "$use_existing" == "y" ]; then
+            for ((i=1; i<=CONFIG_COUNT; i++)); do
+                alias=$($PLIST_BUDDY -c "Print :$i:Alias" "$CONFIG_FILE")
+                echo "$i: $alias"
+            done
+            read -p "请选择配置编号: " config_num
+            USERNAME=$($PLIST_BUDDY -c "Print :$config_num:Username" "$CONFIG_FILE")
+            PASSWORD=$($PLIST_BUDDY -c "Print :$config_num:Password" "$CONFIG_FILE")
+            PORT=$($PLIST_BUDDY -c "Print :$config_num:Port" "$CONFIG_FILE")
+            MOUNT_POINT=$($PLIST_BUDDY -c "Print :$config_num:MountPoint" "$CONFIG_FILE")
         else
-            echo "无效的选择，请重新选择。"
-            sleep 2
-            select_alias
+            add_server_config
         fi
-    done
-}
-
-# 一键工厂激活iOS
-activate_ios() {
-    echo "该激活无法支持SIM卡及通话。"
-    read -p "了解并继续 (y/n): " confirm
-
-    if [ "$confirm" != "y" ]; then
-        return
+    else
+        add_server_config
     fi
-
-    echo "1. iOS5-iOS6激活"
-    echo "2. iOS7-iOS9激活"
-    read -p "请选择: " choice
-
-    case $choice in
-        1) activate_ios5_6 ;;
-        2) activate_ios7_9 ;;
-        *) echo "无效的选择，请重新选择。" ;;
-    esac
 }
 
 # 激活iOS5-iOS6
 activate_ios5_6() {
-    read -p "请输入挂载点 (例如 mnt1): " mount_point
-
-    if scp -P "$port" "$LOCKDOWND_FILE" "$username@localhost:$mount_point/usr/libexec/lockdownd" && \
-       ssh -p "$port" "$username@localhost" "chmod 0755 $mount_point/usr/libexec/lockdownd"; then
-        echo "激活成功"
-    else
-        echo "激活失败，请检查错误信息。"
+    read -p "请输入挂载点 (例如, mnt1): " mount_point
+    scp -P "$PORT" "$LOCKDOWND_PATH" "$USERNAME@localhost:/$mount_point/usr/libexec/lockdownd"
+    if [ $? -ne 0 ]; then
+        echo "lockdownd文件传输失败。"
+        return 1
     fi
+    ssh -p "$PORT" "$USERNAME@localhost" "chmod 0755 /$mount_point/usr/libexec/lockdownd"
+    if [ $? -ne 0 ]; then
+        echo "设置lockdownd文件权限失败。"
+        return 1
+    fi
+    echo "iOS5-iOS6激活成功。"
+}
+
+# 修改com.apple.MobileGestalt.plist以激活iOS7-iOS9
+modify_plist() {
+    plist_file="$TEMP_DIR/com.apple.MobileGestalt.plist"
+    scp -P "$PORT" "$USERNAME@localhost:/$MOUNT_POINT/mobile/Library/Caches/com.apple.MobileGestalt.plist" "$plist_file"
+    if [ $? -ne 0 ]; then
+        echo "com.apple.MobileGestalt.plist文件传输失败。"
+        return 1
+    fi
+    $PLIST_BUDDY -c "Add :a6vjPkzcRjrsXmniFsm0dg bool true" "$plist_file"
+    if [ $? -ne 0 ]; then
+        echo "修改com.apple.MobileGestalt.plist文件失败。"
+        return 1
+    fi
+    scp -P "$PORT" "$plist_file" "$USERNAME@localhost:/$MOUNT_POINT/mobile/Library/Caches/com.apple.MobileGestalt.plist"
+    if [ $? -ne 0 ]; then
+        echo "推送修改后的com.apple.MobileGestalt.plist文件失败。"
+        return 1
+    fi
+    rm -rf "$TEMP_DIR"
+    echo "iOS7-iOS9激活成功。"
 }
 
 # 激活iOS7-iOS9
 activate_ios7_9() {
-    read -p "请输入挂载点 (例如 mnt1): " mount_point
+    modify_plist
+}
 
-    if scp -P "$port" "$username@localhost:$mount_point/mobile/Library/Caches/com.apple.MobileGestalt.plist" "$TEMP_DIR/"; then
-        /usr/libexec/PlistBuddy -c "Add :a6vjPkzcRjrsXmniFsm0dg bool true" "$TEMP_DIR/com.apple.MobileGestalt.plist"
-        if scp -P "$port" "$TEMP_DIR/com.apple.MobileGestalt.plist" "$username@localhost:$mount_point/mobile/Library/Caches/com.apple.MobileGestalt.plist"; then
-            echo "激活成功"
-        else
-            echo "激活失败，请检查错误信息。"
-        fi
+# 绕过iCloud激活锁
+one_key_bypass_icloud_lock() {
+    read -p "请输入挂载点 (例如, mnt1): " mount_point
+    echo "此功能仅绕过iCloud激活锁。设备仍处于未激活状态，无法使用iTunes同步或其他工具（如Aisi Assistant）。建议使用“一键工厂激活iOS”功能。"
+    read -p "是否要转而进行工厂激活？ (y/n): " proceed
+    if [ "$proceed" == "y" ]; then
+        one_key_factory_activation
     else
-        echo "激活失败，请检查错误信息。"
+        ssh -p "$PORT" "$USERNAME@localhost" "rm -rf /$mount_point/Applications/Setup.app"
+        if [ $? -ne 0 ]; then
+            echo "删除Setup.app失败。"
+            return 1
+        fi
+        setup_app_exists=$(ssh -p "$PORT" "$USERNAME@localhost" "[ -e /$mount_point/Applications/Setup.app ] && echo exists || echo notexists")
+        if [ "$setup_app_exists" == "notexists" ]; then
+            echo "成功绕过iCloud激活锁。"
+        else
+            echo "绕过iCloud激活锁失败。"
+        fi
     fi
 }
 
-# sftp文件管理器
-sftp_manager() {
-    read -p "请输入用户名: " username
-    read -p "请输入密码: " password
-    read -p "请输入主机地址: " host
-    read -p "请输入端口号: " port
-
-    sshpass -p "$password" sftp -oPort="$port" "$username@$host"
+# 工厂激活iOS
+one_key_factory_activation() {
+    echo "此激活不支持SIM卡和通话功能。"
+    read -p "按回车继续..."
+    echo "选择激活类型:"
+    echo "1. iOS5-iOS6激活"
+    echo "2. iOS7-iOS9激活"
+    read -p "请输入选项编号 (1/2): " choice
+    case $choice in
+        1) activate_ios5_6 ;;
+        2) activate_ios7_9 ;;
+        *) echo "无效的选择，请重新输入。" ;;
+    esac
 }
 
-# 启动主菜单
+# SFTP文件管理器
+sftp_file_manager() {
+    sftp -oPort="$PORT" "$USERNAME@localhost"
+}
+
+# 主菜单
+main_menu() {
+    while true; do
+        echo "32位iPhone SSHRamdisk操作工具"
+        echo "1. 连接设备"
+        echo "2. 一键绕过iCloud激活锁"
+        echo "3. 一键工厂激活iOS"
+        echo "4. SFTP文件管理器"
+        echo "5. 退出"
+        read -p "请输入选项编号: " option
+        case $option in
+            1) connect_device ;;
+            2) one_key_bypass_icloud_lock ;;
+            3) one_key_factory_activation ;;
+            4) sftp_file_manager ;;
+            5) exit ;;
+            *) echo "无效的选择，请重新输入。" ;;
+        esac
+    done
+}
+
+# 加载配置文件并启动主菜单
+load_config
 main_menu
+
+
+

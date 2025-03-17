@@ -12,6 +12,41 @@ PLIST_BUDDY="/usr/libexec/PlistBuddy"
 # 创建必要的目录
 mkdir -p "$BASE_DIR/data"
 
+# 新建服务器配置
+create_server_config() {
+    echo "请输入服务器别名:"
+    read -r alias
+    echo "请输入服务器地址:"
+    read -r server
+    echo "请输入用户名:"
+    read -r user
+    echo "请输入密码:"
+    read -r -s password
+    echo "请输入端口号:"
+    read -r port
+
+    # 测试 SSH 连接
+    if sshpass -p "$password" ssh -o StrictHostKeyChecking=no -p "$port" "$user@$server" "echo 2>&1"; then
+        echo "服务器测试成功，配置已保存。"
+
+        # 如果配置文件不存在，则创建
+        if [[ ! -f "$CONFIG_FILE" ]]; then
+            $PLIST_BUDDY -c "Add :Servers array" "$CONFIG_FILE"
+        fi
+
+        # 添加新配置
+        index=$($PLIST_BUDDY -c "Print :Servers" "$CONFIG_FILE" | grep "Dict" | wc -l)
+        $PLIST_BUDDY -c "Add :Servers:$index dict" "$CONFIG_FILE"
+        $PLIST_BUDDY -c "Add :Servers:$index:Alias string $alias" "$CONFIG_FILE"
+        $PLIST_BUDDY -c "Add :Servers:$index:Server string $server" "$CONFIG_FILE"
+        $PLIST_BUDDY -c "Add :Servers:$index:User string $user" "$CONFIG_FILE"
+        $PLIST_BUDDY -c "Add :Servers:$index:Password string $password" "$CONFIG_FILE"
+        $PLIST_BUDDY -c "Add :Servers:$index:Port string $port" "$CONFIG_FILE"
+    else
+        echo "服务器连接失败，请检查信息后重试。"
+    fi
+}
+
 # 选择服务器配置
 select_server_config() {
     if [[ ! -f "$CONFIG_FILE" ]]; then
@@ -38,41 +73,6 @@ select_server_config() {
     return 0
 }
 
-# 新建服务器配置
-create_server_config() {
-    echo "请输入服务器别名:"
-    read -r alias
-    echo "请输入服务器地址:"
-    read -r server
-    echo "请输入用户名:"
-    read -r user
-    echo "请输入密码:"
-    read -r -s password
-    echo "请输入端口号:"
-    read -r port
-
-    echo "测试 SSH 连接..."
-    if sshpass -p "$password" ssh -o StrictHostKeyChecking=no -p "$port" "$user@$server" "exit"; then
-        echo "服务器测试成功，保存配置..."
-
-        if [[ ! -f "$CONFIG_FILE" ]]; then
-            $PLIST_BUDDY -c "Add :Servers array" "$CONFIG_FILE"
-        fi
-
-        $PLIST_BUDDY -c "Add :Servers:0 dict" "$CONFIG_FILE"
-        $PLIST_BUDDY -c "Add :Servers:0:Alias string $alias" "$CONFIG_FILE"
-        $PLIST_BUDDY -c "Add :Servers:0:Server string $server" "$CONFIG_FILE"
-        $PLIST_BUDDY -c "Add :Servers:0:User string $user" "$CONFIG_FILE"
-        $PLIST_BUDDY -c "Add :Servers:0:Password string $password" "$CONFIG_FILE"
-        $PLIST_BUDDY -c "Add :Servers:0:Port string $port" "$CONFIG_FILE"
-
-        echo "配置已保存。"
-    else
-        echo "连接失败，请检查输入的信息。"
-        exit 1
-    fi
-}
-
 # 选择 SSHRamdisk 挂载目录
 select_mnt() {
     echo "请输入 SSHRamdisk 挂载目录 (mnt1, mnt2, mnt3)："
@@ -82,9 +82,10 @@ select_mnt() {
 # iOS 5-6 激活
 activate_ios5_6() {
     select_mnt
+
     if [[ ! -f "$LOCKDOWND_FILE" ]]; then
         echo "错误：lockdownd 文件不存在，请将 lockdownd 文件放入 data/ 目录下。"
-        exit 1
+        return 1
     fi
 
     scp -P "$port" "$LOCKDOWND_FILE" "$user@$server:/$mnt/usr/libexec/lockdownd"
@@ -107,6 +108,28 @@ activate_ios7_9() {
     echo "临时文件已删除。"
 }
 
+# 一键绕过 iCloud 激活锁
+bypass_icloud() {
+    select_mnt
+    echo "警告：该功能**仅绕过 iCloud 激活锁**，设备仍处于未激活状态，无法使用 iTunes 或安装应用。"
+    echo "建议使用【一键工厂激活 iOS】。是否跳转至【一键工厂激活 iOS】？(y/n)"
+    read -r choice
+
+    if [[ "$choice" == "y" ]]; then
+        return
+    fi
+
+    echo "正在删除 /$mnt/Applications/Setup.app..."
+    ssh -p "$port" "$user@$server" "rm -rf /$mnt/Applications/Setup.app"
+
+    echo "验证删除情况..."
+    if ssh -p "$port" "$user@$server" "[ ! -d /$mnt/Applications/Setup.app ]"; then
+        echo "成功绕过 iCloud 激活锁。"
+    else
+        echo "绕过失败，/Applications/Setup.app 仍然存在，请检查权限或尝试其他方法。"
+    fi
+}
+
 # SFTP 文件管理器
 sftp_manager() {
     sftp -oPort="$port" "$user@$server"
@@ -117,9 +140,10 @@ main_menu() {
     while true; do
         echo "32位iPhone SSHRamdisk操作工具"
         echo "1. 连接设备"
-        echo "2. 一键工厂激活 iOS"
-        echo "3. SFTP 文件管理器"
-        echo "4. 退出"
+        echo "2. 一键绕过 iCloud 激活锁"
+        echo "3. 一键工厂激活 iOS"
+        echo "4. SFTP 文件管理器"
+        echo "5. 退出"
         read -r option
 
         case $option in
@@ -135,6 +159,9 @@ main_menu() {
             fi
             ;;
         2)
+            bypass_icloud
+            ;;
+        3)
             echo "1. iOS 5-6 激活"
             echo "2. iOS 7-9 激活"
             read -r ios_version
@@ -144,10 +171,10 @@ main_menu() {
                 activate_ios7_9
             fi
             ;;
-        3)
+        4)
             sftp_manager
             ;;
-        4)
+        5)
             exit 0
             ;;
         *)

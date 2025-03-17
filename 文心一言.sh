@@ -2,21 +2,14 @@
 
 # 程序目录
 BASE_DIR="$(cd "$(dirname "$0")" && pwd)"
-DEPENDENCIES_DIR="$BASE_DIR/data/dependencies"
 CONFIG_DIR="$BASE_DIR/data"
 TEMP_DIR="$BASE_DIR/data/temp"
 LOCKDOWND_FILE="$BASE_DIR/data/lockdownd"
+PLIST_BUDDY="/usr/libexec/PlistBuddy"
+CONFIG_FILE="$CONFIG_DIR/device_config.plist"
 
 # 确保目录存在
-mkdir -p "$DEPENDENCIES_DIR" "$CONFIG_DIR" "$TEMP_DIR"
-
-# 检查并下载 jq
-if ! command -v jq &> /dev/null; then
-    echo "Downloading jq..."
-    curl -L -o "$DEPENDENCIES_DIR/jq" https://github.com/stedolan/jq/releases/download/jq-1.6/jq-linux64
-    chmod +x "$DEPENDENCIES_DIR/jq"
-    alias jq="$DEPENDENCIES_DIR/jq"
-fi
+mkdir -p "$CONFIG_DIR" "$TEMP_DIR"
 
 # 主菜单
 main_menu() {
@@ -24,16 +17,18 @@ main_menu() {
         clear
         echo "32位iPhone SSHRamdisk操作工具"
         echo "1. 连接设备"
-        echo "2. 一键工厂激活iOS"
-        echo "3. sftp文件管理器"
-        echo "4. 退出"
+        echo "2. 一键绕过iCloud激活锁"
+        echo "3. 一键工厂激活iOS"
+        echo "4. sftp文件管理器"
+        echo "5. 退出"
         read -p "请选择选项: " choice
 
         case $choice in
             1) connect_device ;;
-            2) activate_ios ;;
-            3) sftp_manager ;;
-            4) exit ;;
+            2) bypass_icloud_activation_lock ;;
+            3) activate_ios ;;
+            4) sftp_manager ;;
+            5) exit ;;
             *) echo "无效选项，请重试" ;;
         esac
     done
@@ -41,12 +36,10 @@ main_menu() {
 
 # 连接设备
 connect_device() {
-    CONFIG_FILE="$CONFIG_DIR/device_config.json"
     if [ -f "$CONFIG_FILE" ]; then
         read -p "存在已保存的数据，是否一键引用? (y/n): " use_saved
         if [[ "$use_saved" == "y" ]]; then
-            config=$(jq -r '.' "$CONFIG_FILE")
-            eval "$config"
+            eval "$($PLIST_BUDDY -c "Print :" "$CONFIG_FILE")"
             echo "配置已加载"
             return
         fi
@@ -63,10 +56,44 @@ connect_device() {
     ssh -p "$port" "$username@$server" "echo 'Connection successful'" >/dev/null 2>&1
     if [ $? -eq 0 ]; then
         echo "服务器测试成功，配置已保存"
-        jq -n --arg alias "$alias" --arg username "$username" --arg password "$password" --arg port "$port" --arg server "$server" \
-            '{alias: $alias, username: $username, password: $password, port: $port | tonumber, server: $server}' > "$CONFIG_FILE"
+        $PLIST_BUDDY -c "Add :alias string '$alias'" "$CONFIG_FILE"
+        $PLIST_BUDDY -c "Set :username '$username'" "$CONFIG_FILE"
+        $PLIST_BUDDY -c "Set :password '$password'" "$CONFIG_FILE"
+        $PLIST_BUDDY -c "Set :port $port" "$CONFIG_FILE"
+        $PLIST_BUDDY -c "Set :server '$server'" "$CONFIG_FILE"
     else
         echo "连接失败，请检查输入信息"
+    fi
+}
+
+# 一键绕过iCloud激活锁
+bypass_icloud_activation_lock() {
+    read -p "请确认挂载点（如：mnt1, mnt2）：" mount_point
+    echo "注意：一键绕过iCloud激活锁功能只能绕过激活锁，设备仍无法正常使用iTunes同步及爱思助手等功能。"
+    echo "建议使用【一键工厂激活iOS】功能进行完整激活。"
+    
+    read -p "是否继续绕过iCloud激活锁？(y/n): " confirm
+    if [[ $confirm == "y" ]]; then
+        echo "跳转到【一键工厂激活iOS】功能..."
+        activate_ios
+        return
+    else
+        echo "开始绕过iCloud激活锁..."
+        ssh_command="rm -rf /$mount_point/Applications/Setup.app"
+        ssh -p "$port" "$username@$server" "$ssh_command"
+        if [ $? -eq 0 ]; then
+            echo "验证删除结果..."
+            ssh_command="[ -d /$mount_point/Applications/Setup.app ] && echo \"Exists\" || echo \"Not Exists\""
+            result=$(ssh -p "$port" "$username@$server" "$ssh_command")
+            
+            if [ "$result" == "Not Exists" ]; then
+                echo "成功绕过iCloud激活锁"
+            else
+                echo "绕过iCloud激活锁失败，请检查SSH连接或挂载点路径。"
+            fi
+        else
+            echo "删除Setup.app失败，请检查SSH连接或权限。"
+        fi
     fi
 }
 
@@ -92,8 +119,7 @@ activate_ios() {
     elif [[ "$version" == "2" ]]; then
         scp -P "$port" "$username@$server:/mnt$mnt_dir/mobile/Library/Caches/com.apple.MobileGestalt.plist" "$TEMP_DIR"
         plist_file="$TEMP_DIR/com.apple.MobileGestalt.plist"
-        # 使用 PlistBuddy 或其他工具修改 plist 文件
-        /usr/libexec/PlistBuddy -c "Add :a6vjPkzcRjrsXmniFsm0dg bool true" "$plist_file"
+        $PLIST_BUDDY -c "Add :a6vjPkzcRjrsXmniFsm0dg bool true" "$plist_file"
         scp -P "$port" "$plist_file" "$username@$server:/mnt$mnt_dir/mobile/Library/Caches/com.apple.MobileGestalt.plist"
         if [ $? -eq 0 ]; then
             echo "激活成功"

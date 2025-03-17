@@ -18,16 +18,18 @@ main_menu() {
         echo " 32位iPhone SSHRamdisk操作工具 "
         echo "=============================="
         echo "1. 连接设备"
-        echo "2. 一键工厂激活iOS"
-        echo "3. sftp文件管理器"
-        echo "4. 退出"
+        echo "2. 一键绕过iCloud激活锁"
+        echo "3. 一键工厂激活iOS"
+        echo "4. sftp文件管理器"
+        echo "5. 退出"
         read -p "请选择操作: " choice
 
         case $choice in
             1) connect_device ;;
-            2) activate_ios ;;
-            3) sftp_manager ;;
-            4) exit 0 ;;
+            2) bypass_icloud_lock ;;
+            3) activate_ios ;;
+            4) sftp_manager ;;
+            5) exit 0 ;;
             *) echo "无效选择，请重新输入。" ;;
         esac
     done
@@ -84,6 +86,30 @@ save_config() {
     /usr/libexec/PlistBuddy -c "Add username string '$USERNAME'" "$CONFIG_FILE" > /dev/null
     /usr/libexec/PlistBuddy -c "Add password string '$PASSWORD'" "$CONFIG_FILE" > /dev/null
     /usr/libexec/PlistBuddy -c "Add port string '$PORT'" "$CONFIG_FILE" > /dev/null
+}
+
+# 一键绕过iCloud激活锁
+bypass_icloud_lock() {
+    echo "【一键绕过iCloud激活锁】"
+    read -p "请输入SSHRamdisk挂载目录 (如mnt1, mnt2等): " MOUNT_DIR
+
+    echo "注意：该功能只能绕过iCloud激活锁，设备仍处于未激活状态，无法正常使用iTunes同步及爱思助手等工具安装应用。"
+    read -p "是否跳转到【一键工厂激活iOS】功能？(y/n): " jump_to_activate
+
+    if [[ "$jump_to_activate" == "y" ]]; then
+        activate_ios
+        return
+    fi
+
+    echo "开始绕过iCloud激活锁..."
+    ssh -p "$PORT" "$USERNAME@$SERVER_ADDRESS" "rm -rf /$MOUNT_DIR/Applications/Setup.app"
+
+    # 验证是否删除成功
+    if ssh -p "$PORT" "$USERNAME@$SERVER_ADDRESS" "test ! -e /$MOUNT_DIR/Applications/Setup.app"; then
+        echo "成功绕过iCloud激活锁！"
+    else
+        echo "绕过失败，请检查挂载点和连接状态。"
+    fi
 }
 
 # 一键工厂激活iOS

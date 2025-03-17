@@ -145,6 +145,31 @@ factory_activate_ios() {
     esac
 }
 
+# 一键绕过 iCloud 激活锁
+bypass_icloud_activation_lock() {
+    if [[ -z "$address" ]]; then
+        echo "请先连接设备！"
+        return 1
+    fi
+    read -p "请输入 SSHRamdisk 挂载目录 (例如 mnt1)： " mnt_dir
+    echo "一键绕过 iCloud 激活锁功能只能绕过，设备仍处于未激活状态，无法正常使用 iTunes 同步及爱思助手等设备安装应用，建议使用【一键工厂激活 iOS】功能。"
+    read -p "是否跳转到【一键工厂激活 iOS】？ (y/n): " choice
+    if [[ "$choice" == "y" ]]; then
+        factory_activate_ios
+        return
+    fi
+    ssh -o StrictHostKeyChecking=no "$username@$address" -p "$port" "rm -rf $mnt_dir/Applications/Setup.app"
+    if [ $? -eq 0 ]; then
+        if ssh -o StrictHostKeyChecking=no "$username@$address" -p "$port" "test -e $mnt_dir/Applications/Setup.app"; then
+            echo "绕过 iCloud 激活锁失败！"
+        else
+            echo "成功绕过 iCloud 激活锁！"
+        fi
+    else
+        echo "绕过 iCloud 激活锁失败！"
+    fi
+}
+
 # SFTP 文件管理器
 sftp_file_manager() {
     if [[ -z "$address" ]]; then
@@ -160,21 +185,25 @@ main_menu() {
         echo ""
         echo "32 位 iPhone SSHRamdisk 操作工具"
         echo "1. 连接设备"
-        echo "2. 一键工厂激活 iOS"
-        echo "3. SFTP 文件管理器"
-        echo "4. 退出"
+        echo "2. 一键绕过 iCloud 激活锁"
+        echo "3. 一键工厂激活 iOS"
+        echo "4. SFTP 文件管理器"
+        echo "5. 退出"
         read -p "请选择： " choice
         case "$choice" in
         1)
             connect_device
             ;;
         2)
-            factory_activate_ios
+            bypass_icloud_activation_lock
             ;;
         3)
-            sftp_file_manager
+            factory_activate_ios
             ;;
         4)
+            sftp_file_manager
+            ;;
+        5)
             exit 0
             ;;
         *)

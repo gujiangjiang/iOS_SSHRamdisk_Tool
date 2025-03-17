@@ -125,6 +125,42 @@ connect_device() {
     fi
 }
 
+# 一键绕过iCloud激活锁
+bypass_icloud_activation() {
+    echo "=== 一键绕过iCloud激活锁 ==="
+    if [ -z "$mount_point" ]; then
+        read -p "请输入挂载点（例如 /mnt1, /mnt2）： " mount_point
+    fi
+    echo "使用挂载点：$mount_point"
+
+    if [ -z "$server_address" ] || [ -z "$username" ] || [ -z "$port" ]; then
+        echo "错误：未找到服务器配置。请先连接设备。"
+        return
+    fi
+
+    echo "注意：一键绕过iCloud激活锁功能只能绕过激活锁，设备仍处于未激活状态，无法正常使用iTunes同步及爱思助手等设备安装应用。"
+    read -p "建议使用【一键工厂激活iOS】功能，是否跳转？（y/n）： " choice
+    if [ "$choice" = "y" ]; then
+        activate_ios_menu
+        return
+    fi
+
+    echo "正在删除 ${mount_point}/Applications/Setup.app..."
+    ssh -p "$port" "$username@$server_address" "rm -f ${mount_point}/Applications/Setup.app" &> /dev/null
+    if [ $? -ne 0 ]; then
+        echo "错误：删除 ${mount_point}/Applications/Setup.app 失败，可能是权限不足或文件不存在。"
+        return
+    fi
+
+    echo "正在验证删除结果..."
+    ssh -p "$port" "$username@$server_address" "[ -f ${mount_point}/Applications/Setup.app ]" &> /dev/null
+    if [ $? -ne 0 ]; then
+        echo "成功绕过iCloud激活锁。"
+    else
+        echo "绕过iCloud激活锁失败，${mount_point}/Applications/Setup.app 仍然存在，可能是删除操作未生效。"
+    fi
+}
+
 # iOS5-iOS6 激活
 activate_ios5_6() {
     echo "=== iOS5-iOS6 激活 ==="
@@ -184,6 +220,22 @@ activate_ios7_9() {
     rm -rf "${TEMP_DIR}"/*
 }
 
+# 一键工厂激活iOS 子菜单
+activate_ios_menu() {
+    echo "此激活功能不支持 SIM 卡或电话功能。"
+    read -p "是否了解？（y/n）： " understand
+    if [ "$understand" = "y" ]; then
+        echo "1. iOS5-iOS6 激活"
+        echo "2. iOS7-iOS9 激活"
+        read -p "请选择激活类型： " act_choice
+        case $act_choice in
+            1) activate_ios5_6 ;;
+            2) activate_ios7_9 ;;
+            *) echo "无效选项。" ;;
+        esac
+    fi
+}
+
 # sftp 文件管理
 sftp_manager() {
     echo "=== SFTP 文件管理 ==="
@@ -229,9 +281,10 @@ main_menu() {
         clear
         echo "=== 32位 iPhone SSH Ramdisk 操作工具 ==="
         echo "1. 连接设备"
-        echo "2. 一键激活 iOS"
-        echo "3. SFTP 文件管理"
-        echo "4. 退出"
+        echo "2. 一键绕过iCloud激活锁"
+        echo "3. 一键工厂激活iOS"
+        echo "4. SFTP 文件管理"
+        echo "5. 退出"
         read -p "请选择选项： " choice
 
         case $choice in
@@ -239,23 +292,15 @@ main_menu() {
                 connect_device
                 ;;
             2)
-                echo "此激活功能不支持 SIM 卡或电话功能。"
-                read -p "是否了解？（y/n）： " understand
-                if [ "$understand" = "y" ]; then
-                    echo "1. iOS5-iOS6 激活"
-                    echo "2. iOS7-iOS9 激活"
-                    read -p "请选择激活类型： " act_choice
-                    case $act_choice in
-                        1) activate_ios5_6 ;;
-                        2) activate_ios7_9 ;;
-                        *) echo "无效选项。" ;;
-                    esac
-                fi
+                bypass_icloud_activation
                 ;;
             3)
-                sftp_manager
+                activate_ios_menu
                 ;;
             4)
+                sftp_manager
+                ;;
+            5)
                 echo "正在退出..."
                 exit 0
                 ;;
