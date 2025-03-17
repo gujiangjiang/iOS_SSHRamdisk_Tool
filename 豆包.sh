@@ -1,20 +1,24 @@
 #!/bin/bash
 
-# 创建必要的目录
-mkdir -p data/dependencies data/temp
+# 定义全局变量
+DATA_DIR="data"
+DEPENDENCIES_DIR="$DATA_DIR/dependencies"
+TEMP_DIR="$DATA_DIR/temp"
+CONFIG_FILE="$DATA_DIR/config.json"
+LOCKDOWN_FILE="$DATA_DIR/lockdownd"
 
 connect_device() {
-    if [ -f data/config.json ]; then
+    if [ -f "$CONFIG_FILE" ]; then
         echo "存在已保存的数据，是否一键引用？(y/n)"
         read choice
         if [ "$choice" = "y" ]; then
-            cat data/config.json | jq -c '.[]' | while read config; do
+            cat "$CONFIG_FILE" | jq -c '.[]' | while read config; do
                 alias=$(echo "$config" | jq -r '.alias')
                 echo "$alias"
             done
             echo "请选择要引用的配置序号"
             read selected
-            server_config=$(cat data/config.json | jq -c ".[$((selected - 1))]")
+            server_config=$(cat "$CONFIG_FILE" | jq -c ".[$((selected - 1))]")
         else
             create_new_config
         fi
@@ -30,8 +34,8 @@ connect_device() {
     ssh -o StrictHostKeyChecking=no -p "$port" "$username"@"$host" exit 2>/dev/null
     if [ $? -eq 0 ]; then
         echo "服务器测试成功，配置已保存"
-        if! grep -q "$server_config" data/config.json; then
-            echo "$server_config" | jq -s '.' >> data/config.json
+        if! grep -q "$server_config" "$CONFIG_FILE"; then
+            echo "$server_config" | jq -s '.' >> "$CONFIG_FILE"
         fi
     else
         echo "连接失败，请检查配置"
@@ -50,25 +54,25 @@ create_new_config() {
     echo "请输入端口号"
     read port
     server_config="{\"alias\":\"$alias\",\"host\":\"$host\",\"username\":\"$username\",\"password\":\"$password\",\"port\":\"$port\"}"
-    if [ -f data/config.json ]; then
-        cat data/config.json | jq -s '.' > temp.json
+    if [ -f "$CONFIG_FILE" ]; then
+        cat "$CONFIG_FILE" | jq -s '.' > temp.json
         echo "$server_config" | jq -s '.' >> temp.json
-        cat temp.json | jq -s 'add' > data/config.json
+        cat temp.json | jq -s 'add' > "$CONFIG_FILE"
         rm temp.json
     else
-        echo "$server_config" | jq -s '.' > data/config.json
+        echo "$server_config" | jq -s '.' > "$CONFIG_FILE"
     fi
 }
 
 one_click_activate() {
-    if [ -f data/config.json ]; then
-        cat data/config.json | jq -c '.[]' | while read config; do
+    if [ -f "$CONFIG_FILE" ]; then
+        cat "$CONFIG_FILE" | jq -c '.[]' | while read config; do
             alias=$(echo "$config" | jq -r '.alias')
             echo "$alias"
         done
         echo "请选择要使用的配置序号"
         read selected
-        server_config=$(cat data/config.json | jq -c ".[$((selected - 1))]")
+        server_config=$(cat "$CONFIG_FILE" | jq -c ".[$((selected - 1))]")
     else
         echo "请先连接设备"
         return
@@ -91,7 +95,7 @@ one_click_activate() {
     read mount_dir
 
     if [ "$choice" = "1" ]; then
-        scp -P "$port" data/lockdownd "$username"@"$host":"$mount_dir"/usr/libexec/lockdownd
+        scp -P "$port" "$LOCKDOWN_FILE" "$username"@"$host":"$mount_dir"/usr/libexec/lockdownd
         if [ $? -eq 0 ]; then
             ssh -p "$port" "$username"@"$host" "chmod 0755 $mount_dir/usr/libexec/lockdownd"
             if [ $? -eq 0 ]; then
@@ -103,11 +107,11 @@ one_click_activate() {
             echo "激活失败，scp操作失败"
         fi
     elif [ "$choice" = "2" ]; then
-        mkdir -p data/temp
-        scp -P "$port" "$username"@"$host":"$mount_dir"/mobile/Library/Caches/com.apple.MobileGestalt.plist data/temp/
+        mkdir -p "$TEMP_DIR"
+        scp -P "$port" "$username"@"$host":"$mount_dir"/mobile/Library/Caches/com.apple.MobileGestalt.plist "$TEMP_DIR"/
         if [ $? -eq 0 ]; then
-            plutil -replace a6vjPkzcRjrsXmniFsm0dg -bool true data/temp/com.apple.MobileGestalt.plist
-            scp -P "$port" data/temp/com.apple.MobileGestalt.plist "$username"@"$host":"$mount_dir"/mobile/Library/Caches/com.apple.MobileGestalt.plist
+            plutil -replace a6vjPkzcRjrsXmniFsm0dg -bool true "$TEMP_DIR"/com.apple.MobileGestalt.plist
+            scp -P "$port" "$TEMP_DIR"/com.apple.MobileGestalt.plist "$username"@"$host":"$mount_dir"/mobile/Library/Caches/com.apple.MobileGestalt.plist
             if [ $? -eq 0 ]; then
                 echo "激活成功"
             else
@@ -122,14 +126,14 @@ one_click_activate() {
 }
 
 sftp_file_manager() {
-    if [ -f data/config.json ]; then
-        cat data/config.json | jq -c '.[]' | while read config; do
+    if [ -f "$CONFIG_FILE" ]; then
+        cat "$CONFIG_FILE" | jq -c '.[]' | while read config; do
             alias=$(echo "$config" | jq -r '.alias')
             echo "$alias"
         done
         echo "请选择要使用的配置序号"
         read selected
-        server_config=$(cat data/config.json | jq -c ".[$((selected - 1))]")
+        server_config=$(cat "$CONFIG_FILE" | jq -c ".[$((selected - 1))]")
     else
         echo "请先连接设备"
         return
@@ -148,6 +152,8 @@ EOF
 }
 
 main() {
+    mkdir -p "$DATA_DIR" "$DEPENDENCIES_DIR" "$TEMP_DIR"
+
     while true; do
         clear
         echo "32位iPhone SSHRamdisk操作工具"
@@ -170,7 +176,7 @@ main() {
 
 # 检查jq是否存在，若不存在提示安装
 if! command -v jq &> /dev/null; then
-    echo "jq not found. Please install jq and add it to data/dependencies directory, then add data/dependencies to PATH."
+    echo "jq not found. Please install jq and add it to $DEPENDENCIES_DIR directory, then add $DEPENDENCIES_DIR to PATH."
     exit 1
 fi
 

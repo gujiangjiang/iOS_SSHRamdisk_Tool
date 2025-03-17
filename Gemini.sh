@@ -1,17 +1,37 @@
 #!/bin/bash
 
+# 全局变量
+address=""
+username=""
+password=""
+port=""
+mnt_dir=""
+
+# 目录变量
+DEPENDENCIES_DIR="data/dependencies"
+CONFIG_DIR="data"
+TEMP_DIR="data/temp"
+LOCKDOWND_FILE="data/lockdownd"
+CONFIG_FILE="$CONFIG_DIR/config.json"
+TEMP_PLIST="$TEMP_DIR/com.apple.MobileGestalt.plist"
+JQ_FILE="$DEPENDENCIES_DIR/jq"
+
+# 创建目录
+mkdir -p "$DEPENDENCIES_DIR"
+mkdir -p "$TEMP_DIR"
+
 # 检查 jq 是否存在，如果不存在则下载
-if [ ! -f "jq" ]; then
+if [ ! -f "$JQ_FILE" ]; then
     echo "检测到 jq 不存在，正在下载..."
-    curl -L -o jq "https://github.com/stedolan/jq/releases/download/jq-1.6/jq-osx-amd64"
-    chmod +x jq
+    curl -L -o "$JQ_FILE" "https://github.com/stedolan/jq/releases/download/jq-1.6/jq-osx-amd64"
+    chmod +x "$JQ_FILE"
     echo "jq 下载完成！"
 fi
 
 # 加载配置文件
 load_config() {
-    if [ -f "config.json" ]; then
-        config=$(cat config.json)
+    if [ -f "$CONFIG_FILE" ]; then
+        config=$(cat "$CONFIG_FILE")
     else
         config="{}"
     fi
@@ -19,7 +39,7 @@ load_config() {
 
 # 保存配置文件
 save_config() {
-    echo "$config" > config.json
+    echo "$config" > "$CONFIG_FILE"
 }
 
 # 测试 SSH 连接
@@ -37,20 +57,20 @@ test_ssh_connection() {
 # 连接设备
 connect_device() {
     load_config
-    if [[ $(echo "$config" | jq -r 'keys | length') -gt 0 ]]; then
+    if [[ $(echo "$config" | "$JQ_FILE" -r 'keys | length') -gt 0 ]]; then
         echo "已保存的服务器："
-        echo "$config" | jq -r 'keys[]' | while read alias; do
+        echo "$config" | "$JQ_FILE" -r 'keys[]' | while read alias; do
             echo "- $alias"
         done
         read -p "是否选择已保存的服务器？ (y/n): " choice
         if [[ "$choice" == "y" ]]; then
             read -p "请输入服务器别名： " alias
-            server_data=$(echo "$config" | jq -r ".[\"$alias\"]")
+            server_data=$(echo "$config" | "$JQ_FILE" -r ".[\"$alias\"]")
             if [[ -n "$server_data" ]]; then
-                address=$(echo "$server_data" | jq -r ".address")
-                username=$(echo "$server_data" | jq -r ".username")
-                password=$(echo "$server_data" | jq -r ".password")
-                port=$(echo "$server_data" | jq -r ".port")
+                address=$(echo "$server_data" | "$JQ_FILE" -r ".address")
+                username=$(echo "$server_data" | "$JQ_FILE" -r ".username")
+                password=$(echo "$server_data" | "$JQ_FILE" -r ".password")
+                port=$(echo "$server_data" | "$JQ_FILE" -r ".port")
                 return 0
             else
                 echo "未找到该服务器！"
@@ -65,7 +85,7 @@ connect_device() {
     read -p "端口号： " port
     if test_ssh_connection; then
         echo "服务器测试成功，配置已保存！"
-        config=$(echo "$config" | jq --arg alias "$alias" --arg address "$address" --arg username "$username" --arg password "$password" --arg port "$port" '. + { ($alias): {address: $address, username: $username, password: $password, port: $port} }')
+        config=$(echo "$config" | "$JQ_FILE" --arg alias "$alias" --arg address "$address" --arg username "$username" --arg password "$password" --arg port "$port" '. + { ($alias): {address: $address, username: $username, password: $password, port: $port} }')
         save_config
         return 0
     else
@@ -76,7 +96,7 @@ connect_device() {
 
 # iOS 5-iOS 6 激活
 activate_ios_5_6() {
-    scp -P "$port" "lockdownd" "$username@$address:$mnt_dir/usr/libexec/lockdownd"
+    scp -P "$port" "$LOCKDOWND_FILE" "$username@$address:$mnt_dir/usr/libexec/lockdownd"
     ssh -o StrictHostKeyChecking=no "$username@$address" -p "$port" "chmod 0755 $mnt_dir/usr/libexec/lockdownd"
     if [ $? -eq 0 ]; then
         echo "激活成功！"
@@ -87,9 +107,9 @@ activate_ios_5_6() {
 
 # iOS 7-iOS 9 激活
 activate_ios_7_9() {
-    scp -P "$port" "$username@$address:$mnt_dir/mobile/Library/Caches/com.apple.MobileGestalt.plist" "temp/com.apple.MobileGestalt.plist"
-    plutil -replace "a6vjPkzcRjrsXmniFsm0dg" -bool true "temp/com.apple.MobileGestalt.plist"
-    scp -P "$port" "temp/com.apple.MobileGestalt.plist" "$username@$address:$mnt_dir/mobile/Library/Caches/com.apple.MobileGestalt.plist"
+    scp -P "$port" "$username@$address:$mnt_dir/mobile/Library/Caches/com.apple.MobileGestalt.plist" "$TEMP_PLIST"
+    plutil -replace "a6vjPkzcRjrsXmniFsm0dg" -bool true "$TEMP_PLIST"
+    scp -P "$port" "$TEMP_PLIST" "$username@$address:$mnt_dir/mobile/Library/Caches/com.apple.MobileGestalt.plist"
     if [ $? -eq 0 ]; then
         echo "激活成功！"
     else
@@ -163,9 +183,6 @@ main_menu() {
         esac
     done
 }
-
-# 创建临时文件夹
-mkdir -p temp
 
 # 运行主菜单
 main_menu

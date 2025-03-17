@@ -2,35 +2,42 @@
 
 set -e
 
-CONFIG_FILE="config.json"
+BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG_FILE="$BASE_DIR/data/config.json"
+DEPENDENCIES_DIR="$BASE_DIR/data/dependencies"
+LOCKDOWND_FILE="$BASE_DIR/data/lockdownd"
 DEPENDENCIES=("jq")
+JQ_BIN="$DEPENDENCIES_DIR/jq"
+
+# 创建目录结构
+mkdir -p "$DEPENDENCIES_DIR"
+mkdir -p "$BASE_DIR/data"
 
 # 自动下载依赖
 install_dependencies() {
     for dep in "${DEPENDENCIES[@]}"; do
-        if ! command -v $dep &>/dev/null; then
-            echo "缺少依赖：$dep，正在下载..."
-            curl -LO "https://github.com/stedolan/jq/releases/latest/download/jq-macos"
-            mv jq-macos jq
-            chmod +x jq
-            echo "jq 已下载并可执行。"
+        if [[ "$dep" == "jq" && ! -f "$JQ_BIN" ]]; then
+            echo "缺少依赖：jq，正在下载..."
+            curl -Lo "$JQ_BIN" "https://github.com/stedolan/jq/releases/latest/download/jq-macos"
+            chmod +x "$JQ_BIN"
+            echo "jq 已下载并存放在 $JQ_BIN"
         fi
     done
 }
 
-# 显示已有服务器配置并选择
+# 选择服务器配置
 select_server_config() {
-    if [[ ! -f "$CONFIG_FILE" || $(jq length "$CONFIG_FILE") -eq 0 ]]; then
+    if [[ ! -f "$CONFIG_FILE" || $("$JQ_BIN" length "$CONFIG_FILE") -eq 0 ]]; then
         echo "当前无已保存的服务器配置。"
         return 1
     fi
 
     echo "请选择要加载的服务器别名："
-    jq -r '.[].alias' "$CONFIG_FILE" | nl
+    "$JQ_BIN" -r '.[].alias' "$CONFIG_FILE" | nl
     read -r choice
 
-    selected_alias=$(jq -r --argjson idx "$choice" '.[$idx - 1].alias' "$CONFIG_FILE")
-    selected_config=$(jq -r --argjson idx "$choice" '.[$idx - 1]' "$CONFIG_FILE")
+    selected_alias=$("$JQ_BIN" -r --argjson idx "$choice" '.[$idx - 1].alias' "$CONFIG_FILE")
+    selected_config=$("$JQ_BIN" -r --argjson idx "$choice" '.[$idx - 1]' "$CONFIG_FILE")
 
     if [[ -z "$selected_alias" ]]; then
         echo "选择无效，请重试。"
@@ -38,10 +45,10 @@ select_server_config() {
     fi
 
     echo "已选择服务器：$selected_alias"
-    user=$(jq -r '.user' <<< "$selected_config")
-    server=$(jq -r '.server' <<< "$selected_config")
-    password=$(jq -r '.password' <<< "$selected_config")
-    port=$(jq -r '.port' <<< "$selected_config")
+    user=$("$JQ_BIN" -r '.user' <<< "$selected_config")
+    server=$("$JQ_BIN" -r '.server' <<< "$selected_config")
+    password=$("$JQ_BIN" -r '.password' <<< "$selected_config")
+    port=$("$JQ_BIN" -r '.port' <<< "$selected_config")
 
     return 0
 }
@@ -63,9 +70,8 @@ create_server_config() {
     if sshpass -p "$password" ssh -o StrictHostKeyChecking=no -p "$port" "$user@$server" "exit"; then
         echo "服务器测试成功，保存配置..."
 
-        # 读取现有配置并添加新配置
         if [[ -f "$CONFIG_FILE" ]]; then
-            config_data=$(jq ". + [{\"alias\": \"$alias\", \"server\": \"$server\", \"user\": \"$user\", \"password\": \"$password\", \"port\": \"$port\"}]" "$CONFIG_FILE")
+            config_data=$("$JQ_BIN" ". + [{\"alias\": \"$alias\", \"server\": \"$server\", \"user\": \"$user\", \"password\": \"$password\", \"port\": \"$port\"}]" "$CONFIG_FILE")
         else
             config_data="[ {\"alias\": \"$alias\", \"server\": \"$server\", \"user\": \"$user\", \"password\": \"$password\", \"port\": \"$port\"} ]"
         fi
@@ -86,7 +92,12 @@ select_mnt() {
 # iOS 5-6 激活
 activate_ios5_6() {
     select_mnt
-    scp -P "$port" lockdownd "$user@$server:/$mnt/usr/libexec/lockdownd"
+    if [[ ! -f "$LOCKDOWND_FILE" ]]; then
+        echo "错误：lockdownd 文件不存在，请将 lockdownd 文件放入 data/ 目录下。"
+        exit 1
+    fi
+
+    scp -P "$port" "$LOCKDOWND_FILE" "$user@$server:/$mnt/usr/libexec/lockdownd"
     ssh -p "$port" "$user@$server" "chmod 0755 /$mnt/usr/libexec/lockdownd"
     echo "iOS 5-6 激活完成。"
 }
@@ -94,10 +105,12 @@ activate_ios5_6() {
 # iOS 7-9 激活
 activate_ios7_9() {
     select_mnt
-    mkdir -p temp
-    scp -P "$port" "$user@$server:/$mnt/mobile/Library/Caches/com.apple.MobileGestalt.plist" temp/
-    plutil -insert "a6vjPkzcRjrsXmniFsm0dg" -bool true temp/com.apple.MobileGestalt.plist
-    scp -P "$port" temp/com.apple.MobileGestalt.plist "$user@$server:/$mnt/mobile/Library/Caches/"
+    mkdir -p "$BASE_DIR/data/temp"
+    scp -P "$port" "$user@$server:/$mnt/mobile/Library/Caches/com.apple.MobileGestalt.plist" "$BASE_DIR/data/temp/"
+    
+    "$JQ_BIN" --arg key "a6vjPkzcRjrsXmniFsm0dg" --argjson value true '.[$key] = $value' "$BASE_DIR/data/temp/com.apple.MobileGestalt.plist" > "$BASE_DIR/data/temp/com.apple.MobileGestalt_modified.plist"
+    
+    scp -P "$port" "$BASE_DIR/data/temp/com.apple.MobileGestalt_modified.plist" "$user@$server:/$mnt/mobile/Library/Caches/com.apple.MobileGestalt.plist"
     echo "iOS 7-9 激活完成。"
 }
 
