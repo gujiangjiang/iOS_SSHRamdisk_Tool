@@ -3,7 +3,7 @@
 # 检查并下载 jq 依赖
 check_and_install_jq() {
     if ! command -v jq &> /dev/null; then
-        echo "jq not found, downloading..."
+        echo "未找到 jq，正在下载..."
         arch=$(uname -m)
         if [ "$arch" = "arm64" ]; then
             curl -L -o jq https://github.com/stedolan/jq/releases/download/jq-1.7/jq-osx-arm64
@@ -18,7 +18,7 @@ check_and_install_jq() {
 # 检查 expect 是否存在
 check_expect() {
     if ! command -v expect &> /dev/null; then
-        echo "expect not found. Please install expect to use sftp feature."
+        echo "未找到 expect。请安装 expect 以使用 sftp 功能。"
         return 1
     fi
     return 0
@@ -31,7 +31,7 @@ init_config() {
     fi
 }
 
-# 加载所有配置的别名
+# 列出所有配置的别名
 list_aliases() {
     jq -r '.[].alias' config.json
 }
@@ -62,108 +62,108 @@ test_ssh_connection() {
 
 # 连接设备功能
 connect_device() {
-    echo "=== Connect Device ==="
+    echo "=== 连接设备 ==="
     init_config
     local aliases=$(list_aliases)
     if [ -n "$aliases" ]; then
-        echo "Available configurations:"
+        echo "可用配置："
         echo "$aliases"
-        read -p "Enter alias to load (or type 'new' to create a new config): " selected_alias
+        read -p "请输入要加载的别名（或输入 'new' 新建配置）： " selected_alias
         if [ "$selected_alias" != "new" ]; then
             load_config_by_alias "$selected_alias"
             if [ -n "$alias" ]; then
-                echo "Loaded config for $alias ($server_address)."
+                echo "已加载配置：$alias ($server_address)。"
                 return
             else
-                echo "Error: Alias not found. Creating new config..."
+                echo "错误：未找到该别名。创建新配置..."
             fi
         fi
     fi
 
-    read -p "Enter alias: " alias
-    read -p "Enter server address: " server_address
-    read -p "Enter username: " username
-    read -p "Enter password: " password
-    read -p "Enter port (default 22): " port
+    read -p "请输入别名： " alias
+    read -p "请输入服务器地址： " server_address
+    read -p "请输入用户名： " username
+    read -p "请输入密码： " password
+    read -p "请输入端口号（默认 22）： " port
     port=${port:-22}
-    read -p "Enter mount point (e.g., /mnt1, /mnt2): " mount_point
+    read -p "请输入挂载点（例如 /mnt1, /mnt2）： " mount_point
 
-    echo "Testing connection..."
+    echo "正在测试连接..."
     if test_ssh_connection; then
-        echo "Connection successful. Saving config..."
+        echo "连接成功。正在保存配置..."
         save_config
     else
-        echo "Connection failed. Please check your inputs."
+        echo "连接失败。请检查输入信息。"
     fi
 }
 
 # iOS5-iOS6 激活
 activate_ios5_6() {
-    echo "=== iOS5-iOS6 Activation ==="
+    echo "=== iOS5-iOS6 激活 ==="
     if [ -z "$mount_point" ]; then
-        read -p "Enter mount point (e.g., /mnt1, /mnt2): " mount_point
+        read -p "请输入挂载点（例如 /mnt1, /mnt2）： " mount_point
     fi
-    echo "Using mount point: $mount_point"
+    echo "使用挂载点：$mount_point"
 
     if [ ! -f lockdownd ]; then
-        echo "Error: lockdownd file not found in current directory."
+        echo "错误：当前目录未找到 lockdownd 文件。"
         return
     fi
 
     scp -P "$port" lockdownd "$username@$server_address:$mount_point/usr/libexec/lockdownd" &> /dev/null
     if [ $? -ne 0 ]; then
-        echo "Error: Failed to upload lockdownd file."
+        echo "错误：上传 lockdownd 文件失败。"
         return
     fi
 
     ssh -p "$port" "$username@$server_address" "chmod 0755 $mount_point/usr/libexec/lockdownd" &> /dev/null
     if [ $? -ne 0 ]; then
-        echo "Error: Failed to set permissions for lockdownd."
+        echo "错误：设置 lockdownd 文件权限失败。"
         return
     fi
 
-    echo "Activation successful."
+    echo "激活成功。"
 }
 
 # iOS7-iOS9 激活
 activate_ios7_9() {
-    echo "=== iOS7-iOS9 Activation ==="
+    echo "=== iOS7-iOS9 激活 ==="
     if [ -z "$mount_point" ]; then
-        read -p "Enter mount point (e.g., /mnt1, /mnt2): " mount_point
+        read -p "请输入挂载点（例如 /mnt1, /mnt2）： " mount_point
     fi
-    echo "Using mount point: $mount_point"
+    echo "使用挂载点：$mount_point"
 
     mkdir -p temp
     scp -P "$port" "$username@$server_address:$mount_point/mobile/Library/Caches/com.apple.MobileGestalt.plist" temp/ &> /dev/null
     if [ $? -ne 0 ]; then
-        echo "Error: Failed to download com.apple.MobileGestalt.plist."
+        echo "错误：下载 com.apple.MobileGestalt.plist 文件失败。"
         return
     fi
 
     /usr/libexec/PlistBuddy -c "Add a6vjPkzcRjrsXmniFsm0dg bool true" temp/com.apple.MobileGestalt.plist &> /dev/null
     if [ $? -ne 0 ]; then
-        echo "Error: Failed to modify com.apple.MobileGestalt.plist."
+        echo "错误：修改 com.apple.MobileGestalt.plist 文件失败。"
         return
     fi
 
     scp -P "$port" temp/com.apple.MobileGestalt.plist "$username@$server_address:$mount_point/mobile/Library/Caches/com.apple.MobileGestalt.plist" &> /dev/null
     if [ $? -ne 0 ]; then
-        echo "Error: Failed to upload modified com.apple.MobileGestalt.plist."
+        echo "错误：上传修改后的 com.apple.MobileGestalt.plist 文件失败。"
         return
     fi
 
-    echo "Activation successful."
+    echo "激活成功。"
 }
 
 # sftp 文件管理
 sftp_manager() {
-    echo "=== SFTP File Manager ==="
+    echo "=== SFTP 文件管理 ==="
     if ! check_expect; then
         return
     fi
 
     if [ -z "$server_address" ] || [ -z "$username" ] || [ -z "$password" ] || [ -z "$port" ]; then
-        echo "Error: No server config found. Please connect device first."
+        echo "错误：未找到服务器配置。请先连接设备。"
         return
     fi
 
@@ -191,28 +191,28 @@ main_menu() {
 
     while true; do
         clear
-        echo "=== 32-bit iPhone SSH Ramdisk Tool ==="
-        echo "1. Connect Device"
-        echo "2. One-Click iOS Activation"
-        echo "3. SFTP File Manager"
-        echo "4. Exit"
-        read -p "Select an option: " choice
+        echo "=== 32位 iPhone SSH Ramdisk 操作工具 ==="
+        echo "1. 连接设备"
+        echo "2. 一键激活 iOS"
+        echo "3. SFTP 文件管理"
+        echo "4. 退出"
+        read -p "请选择选项： " choice
 
         case $choice in
             1)
                 connect_device
                 ;;
             2)
-                echo "This activation does not support SIM card or phone calls."
-                read -p "Understand? (y/n): " understand
+                echo "此激活功能不支持 SIM 卡或电话功能。"
+                read -p "是否了解？（y/n）： " understand
                 if [ "$understand" = "y" ]; then
-                    echo "1. iOS5-iOS6 Activation"
-                    echo "2. iOS7-iOS9 Activation"
-                    read -p "Select activation type: " act_choice
+                    echo "1. iOS5-iOS6 激活"
+                    echo "2. iOS7-iOS9 激活"
+                    read -p "请选择激活类型： " act_choice
                     case $act_choice in
                         1) activate_ios5_6 ;;
                         2) activate_ios7_9 ;;
-                        *) echo "Invalid choice." ;;
+                        *) echo "无效选项。" ;;
                     esac
                 fi
                 ;;
@@ -220,14 +220,14 @@ main_menu() {
                 sftp_manager
                 ;;
             4)
-                echo "Exiting..."
+                echo "正在退出..."
                 exit 0
                 ;;
             *)
-                echo "Invalid choice."
+                echo "无效选项。"
                 ;;
         esac
-        read -p "Press Enter to continue..."
+        read -p "按回车键继续..."
     done
 }
 
