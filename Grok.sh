@@ -18,7 +18,7 @@ check_and_install_jq() {
 # 检查 expect 是否存在
 check_expect() {
     if ! command -v expect &> /dev/null; then
-        echo "未找到 expect。请安装 expect 以使用 sftp 功能。"
+        echo "未找到 expect。自动登录功能不可用，但您可以手动输入密码使用 sftp。"
         return 1
     fi
     return 0
@@ -158,16 +158,18 @@ activate_ios7_9() {
 # sftp 文件管理
 sftp_manager() {
     echo "=== SFTP 文件管理 ==="
-    if ! check_expect; then
-        return
-    fi
-
-    if [ -z "$server_address" ] || [ -z "$username" ] || [ -z "$password" ] || [ -z "$port" ]; then
+    if [ -z "$server_address" ] || [ -z "$username" ] || [ -z "$port" ]; then
         echo "错误：未找到服务器配置。请先连接设备。"
         return
     fi
 
-    cat <<EOF > sftp_expect.sh
+    if check_expect; then
+        # 使用 expect 自动登录
+        if [ -z "$password" ]; then
+            echo "错误：未找到密码，无法使用自动登录。请手动输入密码。"
+            sftp -P "$port" "$username@$server_address"
+        else
+            cat <<EOF > sftp_expect.sh
 #!/usr/bin/expect -f
 set username [lindex \$argv 0]
 set server [lindex \$argv 1]
@@ -178,10 +180,15 @@ expect "password:"
 send "\$password\r"
 interact
 EOF
-    chmod +x sftp_expect.sh
-
-    ./sftp_expect.sh "$username" "$server_address" "$port" "$password"
-    rm -f sftp_expect.sh
+            chmod +x sftp_expect.sh
+            ./sftp_expect.sh "$username" "$server_address" "$port" "$password"
+            rm -f sftp_expect.sh
+        fi
+    else
+        # 缺少 expect，提示手动输入密码
+        echo "提示：您可以手动输入密码继续使用 sftp。"
+        sftp -P "$port" "$username@$server_address"
+    fi
 }
 
 # 主菜单
