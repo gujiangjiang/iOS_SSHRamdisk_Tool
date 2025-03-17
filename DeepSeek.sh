@@ -105,7 +105,7 @@ activate_ios5_6() {
 
     MOUNT_DIR=$(input_mount_point)
     echo "开始iOS5-iOS6激活..."
-    scp -P "$PORT" "$LOCKDOWND_FILE" "$USERNAME@$SERVER_ADDRESS:/$MOUNT_DIR/usr/libexec/lockdownd"
+    scp -P "$PORT" "$LOCKDOWND_FILE" "$USERNAME@$SERVER_ADDRESS:/$MOUNT_DIR/usr/libexec/"
     ssh -p "$PORT" "$USERNAME@$SERVER_ADDRESS" "chmod 0755 /$MOUNT_DIR/usr/libexec/lockdownd"
     if [[ $? -eq 0 ]]; then
         echo "激活成功"
