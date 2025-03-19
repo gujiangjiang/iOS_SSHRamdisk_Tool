@@ -7,6 +7,9 @@ CONFIG_FILE="$DATA_DIR/config.plist"
 TEMP_DIR="$DATA_DIR/temp"
 LOCKDOWND_FILE="$DATA_DIR/lockdownd"
 
+# 定义 PlistBuddy 路径
+PLIST_BUDDY="/usr/libexec/PlistBuddy"
+
 # 创建数据目录和临时目录
 mkdir -p "$DATA_DIR"
 mkdir -p "$TEMP_DIR"
@@ -14,22 +17,22 @@ mkdir -p "$TEMP_DIR"
 # 加载配置
 load_config() {
     echo "加载配置..."
-    SERVER_ALIAS=$(/usr/libexec/PlistBuddy -c "Print alias" "$CONFIG_FILE")
-    SERVER_ADDRESS=$(/usr/libexec/PlistBuddy -c "Print address" "$CONFIG_FILE")
-    USERNAME=$(/usr/libexec/PlistBuddy -c "Print username" "$CONFIG_FILE")
-    PASSWORD=$(/usr/libexec/PlistBuddy -c "Print password" "$CONFIG_FILE")
-    PORT=$(/usr/libexec/PlistBuddy -c "Print port" "$CONFIG_FILE")
+    SERVER_ALIAS=$($PLIST_BUDDY -c "Print alias" "$CONFIG_FILE")
+    SERVER_ADDRESS=$($PLIST_BUDDY -c "Print address" "$CONFIG_FILE")
+    USERNAME=$($PLIST_BUDDY -c "Print username" "$CONFIG_FILE")
+    PASSWORD=$($PLIST_BUDDY -c "Print password" "$CONFIG_FILE")
+    PORT=$($PLIST_BUDDY -c "Print port" "$CONFIG_FILE")
     echo "配置加载完成: $SERVER_ALIAS"
 }
 
 # 保存配置
 save_config() {
     echo "保存配置..."
-    /usr/libexec/PlistBuddy -c "Add alias string '$SERVER_ALIAS'" "$CONFIG_FILE" > /dev/null
-    /usr/libexec/PlistBuddy -c "Add address string '$SERVER_ADDRESS'" "$CONFIG_FILE" > /dev/null
-    /usr/libexec/PlistBuddy -c "Add username string '$USERNAME'" "$CONFIG_FILE" > /dev/null
-    /usr/libexec/PlistBuddy -c "Add password string '$PASSWORD'" "$CONFIG_FILE" > /dev/null
-    /usr/libexec/PlistBuddy -c "Add port string '$PORT'" "$CONFIG_FILE" > /dev/null
+    $PLIST_BUDDY -c "Add alias string '$SERVER_ALIAS'" "$CONFIG_FILE" > /dev/null
+    $PLIST_BUDDY -c "Add address string '$SERVER_ADDRESS'" "$CONFIG_FILE" > /dev/null
+    $PLIST_BUDDY -c "Add username string '$USERNAME'" "$CONFIG_FILE" > /dev/null
+    $PLIST_BUDDY -c "Add password string '$PASSWORD'" "$CONFIG_FILE" > /dev/null
+    $PLIST_BUDDY -c "Add port string '$PORT'" "$CONFIG_FILE" > /dev/null
 }
 
 # 测试 SSH 连接
@@ -119,10 +122,19 @@ activate_ios7_9() {
     MOUNT_DIR=$(input_mount_point)
     echo "开始iOS7-iOS9激活..."
     scp -P "$PORT" "$USERNAME@$SERVER_ADDRESS:/$MOUNT_DIR/mobile/Library/Caches/com.apple.MobileGestalt.plist" "$TEMP_DIR/"
-    
+
     # 使用PlistBuddy修改plist文件
-    /usr/libexec/PlistBuddy -c "Add a6vjPkzcRjrsXmniFsm0dg bool true" "$TEMP_DIR/com.apple.MobileGestalt.plist"
-    
+    if $PLIST_BUDDY -c "Print CacheExtra" "$TEMP_DIR/com.apple.MobileGestalt.plist" &> /dev/null; then
+        echo "CacheExtra 键已存在，直接添加新键值对..."
+    else
+        echo "CacheExtra 键不存在，创建 CacheExtra 字典..."
+        $PLIST_BUDDY -c "Add CacheExtra dict" "$TEMP_DIR/com.apple.MobileGestalt.plist"
+    fi
+
+    # 在 CacheExtra 字典下添加新键值对
+    $PLIST_BUDDY -c "Add CacheExtra:a6vjPkzcRjrsXmniFsm0dg bool true" "$TEMP_DIR/com.apple.MobileGestalt.plist"
+
+    # 将修改后的文件推送回设备
     scp -P "$PORT" "$TEMP_DIR/com.apple.MobileGestalt.plist" "$USERNAME@$SERVER_ADDRESS:/$MOUNT_DIR/mobile/Library/Caches/com.apple.MobileGestalt.plist"
     if [[ $? -eq 0 ]]; then
         echo "激活成功"
